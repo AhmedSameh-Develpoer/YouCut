@@ -98,7 +98,12 @@ function validateEditor(value: EditorSettings) {
   if (!Number.isFinite(zoom) || zoom < 1 || zoom > 3 || !Array.isArray(keyframes) || keyframes.length > 1000 || keyframes.some(frame => !frame || ![frame.time, frame.cropX, frame.cropY, frame.zoom].every(Number.isFinite) || frame.time < 0 || frame.time > 86400 || frame.cropX < 0 || frame.cropX > 1 || frame.cropY < 0 || frame.cropY > 1 || frame.zoom < 1 || frame.zoom > 3) || !Array.isArray(trackingLosses) || trackingLosses.length > 1000 || trackingLosses.some(time => !Number.isFinite(time) || time < 0 || time > 86400)) throw new Error('Framing or tracking data is invalid.')
   const sortedKeyframes = keyframes.slice().sort((a, b) => a.time - b.time)
   if (sortedKeyframes.some((frame, index) => index > 0 && frame.time - sortedKeyframes[index - 1].time < .06)) throw new Error('Framing keyframes must be at least 0.06 seconds apart.')
-  return { ...value, zoom, keyframes: sortedKeyframes, trackingLosses: [...new Set(trackingLosses)].sort((a,b)=>a-b), faceCam }
+  let analysis = value.analysis
+  if (analysis !== undefined) {
+    if (!analysis || !analysis.range || ![analysis.range.start, analysis.range.end].every(Number.isFinite) || analysis.range.start < 0 || analysis.range.end <= analysis.range.start || analysis.range.end - analysis.range.start > 300 || !Array.isArray(analysis.sceneChanges) || analysis.sceneChanges.length > 10000 || analysis.sceneChanges.some(time => !Number.isFinite(time) || time < analysis!.range.start || time > analysis!.range.end) || !Array.isArray(analysis.suggestions) || analysis.suggestions.length > 1000 || analysis.suggestions.some(item => !item || typeof item.id !== 'string' || item.id.length > 100 || ![item.start, item.end, item.score].every(Number.isFinite) || item.start < analysis!.range.start || item.end > analysis!.range.end || item.end <= item.start || item.score < 0 || item.score > 100 || typeof item.reason !== 'string' || item.reason.length > 500) || !Array.isArray(analysis.selectedIds) || analysis.selectedIds.length > 1000 || analysis.selectedIds.some(id => !analysis!.suggestions.some(item => item.id === id))) throw new Error('Saved scene analysis is invalid.')
+    analysis = { ...analysis, sceneChanges: [...new Set(analysis.sceneChanges)].sort((a,b)=>a-b), suggestions: analysis.suggestions.slice(), selectedIds: [...new Set(analysis.selectedIds)] }
+  }
+  return { ...value, zoom, keyframes: sortedKeyframes, trackingLosses: [...new Set(trackingLosses)].sort((a,b)=>a-b), faceCam, ...(analysis ? { analysis } : {}) }
 }
 
 async function register(id: string, path: string, metadata?: Pick<RecentEntry, 'name' | 'category' | 'modifiedAt' | 'sourceName'>, touch = true) {

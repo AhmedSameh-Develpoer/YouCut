@@ -13,8 +13,9 @@ export type BatchExportJob = { id: string; status: 'running' | 'complete' | 'can
 export type BatchExportRequest = { mediaUrl: string; clips: BatchClip[]; cropX: number; cropY: number; zoom?: number; keyframes?: FramingKeyframe[]; muted: boolean; fps: 30 | 60; faceCam: FaceCamSettings }
 export type PreviewJob = { id: string; status: 'running' | 'complete' | 'cancelled' | 'error'; progress: number; mediaUrl?: string; error?: string }
 export type SceneSuggestion = { id: string; start: number; end: number; score: number; reason: string }
+export type SavedAnalysis = { range: { start: number; end: number }; sceneChanges: number[]; suggestions: SceneSuggestion[]; selectedIds: string[] }
 export type AnalysisJob = { id: string; status: 'running' | 'complete' | 'cancelled' | 'error'; progress: number; range: { start: number; end: number }; sceneChanges: number[]; suggestions: SceneSuggestion[]; error?: string }
-export type EditorSettings = { start: number; end: number; cropX: number; cropY: number; zoom?: number; keyframes?: FramingKeyframe[]; trackingLosses?: number[]; muted: boolean; fps: 30 | 60; faceCam: FaceCamSettings }
+export type EditorSettings = { start: number; end: number; cropX: number; cropY: number; zoom?: number; keyframes?: FramingKeyframe[]; trackingLosses?: number[]; muted: boolean; fps: 30 | 60; faceCam: FaceCamSettings; analysis?: SavedAnalysis }
 export type ProjectCategory = 'general' | 'gaming' | 'podcast' | 'interview' | 'reaction' | 'education'
 export type ProjectDocument = {
   format: 'youcut-project'; schemaVersion: 1; projectId: string; name: string; category: ProjectCategory
