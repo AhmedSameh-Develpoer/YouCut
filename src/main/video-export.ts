@@ -4,7 +4,7 @@ import { constants } from 'node:fs'
 import { join, dirname, basename, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import type { ExportOptions, ExportJob, FaceCamSettings } from '../shared/contracts'
+import type { ExportOptions, ExportJob, FaceCamSettings, FramingKeyframe } from '../shared/contracts'
 
 export async function findFfmpeg() {
   if (process.env.FFMPEG_PATH) { await access(process.env.FFMPEG_PATH); return process.env.FFMPEG_PATH }
@@ -98,8 +98,28 @@ export async function probeMedia(executable: string, path: string): Promise<{ du
 }
 export function exportArguments(input: string, output: string, o: ExportOptions, sourceFps: number) {
   const x = Math.max(0,Math.min(1,o.cropX)), y = Math.max(0,Math.min(1,o.cropY))
+  const zoom = o.zoom ?? 1, keyframes = o.keyframes || []
+  if (![x,y].every(Number.isFinite) || !Number.isFinite(zoom) || zoom < 1 || zoom > 3 || keyframes.length > 500 || keyframes.some(frame => ![frame.time,frame.cropX,frame.cropY,frame.zoom].every(Number.isFinite) || frame.time < 0 || frame.time > 86400 || frame.cropX < 0 || frame.cropX > 1 || frame.cropY < 0 || frame.cropY > 1 || frame.zoom < 1 || frame.zoom > 3)) throw new Error('Framing keyframes are invalid.')
+  const sortedFrames = keyframes.slice().sort((a,b)=>a.time-b.time)
+  if (sortedFrames.some((frame,index)=>index>0&&frame.time-sortedFrames[index-1].time<.06)) throw new Error('Framing keyframes are too close together.')
+  const interpolate = (time:number,field:'cropX'|'cropY'|'zoom')=>{
+    if(!sortedFrames.length)return field==='cropX'?x:field==='cropY'?y:zoom
+    if(time<=sortedFrames[0].time)return sortedFrames[0][field]
+    if(time>=sortedFrames[sortedFrames.length-1].time)return sortedFrames[sortedFrames.length-1][field]
+    const rightIndex=sortedFrames.findIndex(frame=>frame.time>=time),left=sortedFrames[rightIndex-1],right=sortedFrames[rightIndex]
+    const progress=(time-left.time)/(right.time-left.time)
+    return left[field]+(right[field]-left[field])*progress
+  }
+  const expression=(field:'cropX'|'cropY'|'zoom')=>{
+    if(!sortedFrames.length)return String(field==='cropX'?x:field==='cropY'?y:zoom)
+    const points=[{time:o.start,value:interpolate(o.start,field)},...sortedFrames.filter(frame=>frame.time>o.start+.001&&frame.time<o.end-.001).map(frame=>({time:frame.time,value:frame[field]})),{time:o.end,value:interpolate(o.end,field)}]
+    let result=String(points[points.length-1].value)
+    for(let index=points.length-2;index>=0;index--){const left=points[index],right=points[index+1],duration=right.time-left.time;result=`if(lt(t,${(right.time-o.start).toFixed(4)}),${left.value}+(${right.value-left.value})*(t-${(left.time-o.start).toFixed(4)})/${duration.toFixed(4)},${result})`}
+    return result
+  }
+  const cropZoom=expression('zoom'),cropX=expression('cropX'),cropY=expression('cropY')
   const fps = Math.min(o.fps,sourceFps)
-  const baseFilter = `crop=w='trunc(min(iw,ih*9/16)/2)*2':h='trunc(min(ih,iw*16/9)/2)*2':x='(iw-ow)*${x}':y='(ih-oh)*${y}',scale=1080:1920:flags=lanczos,setsar=1`
+  const baseFilter = `crop=w='trunc(min(iw,ih*9/16)/(${cropZoom})/2)*2':h='trunc(min(ih,iw*16/9)/(${cropZoom})/2)*2':x='(iw-ow)*(${cropX})':y='(ih-oh)*(${cropY})',scale=1080:1920:flags=lanczos,setsar=1`
   const cam: FaceCamSettings = o.faceCam || { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 }
   const validCam = typeof cam.enabled === 'boolean' && [cam.x,cam.y,cam.width,cam.height,cam.size,cam.positionX,cam.positionY].every(Number.isFinite) && cam.x >= 0 && cam.y >= 0 && cam.width >= .02 && cam.height >= .02 && cam.x + cam.width <= 1 && cam.y + cam.height <= 1 && cam.size >= .1 && cam.size <= .6 && ['top','bottom','custom'].includes(cam.placement) && cam.positionX >= 0 && cam.positionX <= 1 && cam.positionY >= 0 && cam.positionY <= 1
   if (!validCam) throw new Error('Face camera settings are invalid.')

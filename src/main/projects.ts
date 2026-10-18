@@ -93,7 +93,11 @@ function validateEditor(value: EditorSettings) {
   if (!value || !Number.isFinite(value.start) || !Number.isFinite(value.end) || value.start < 0 || value.end <= value.start || !Number.isFinite(value.cropX) || value.cropX < 0 || value.cropX > 1 || !Number.isFinite(value.cropY) || value.cropY < 0 || value.cropY > 1 || typeof value.muted !== 'boolean' || ![30, 60].includes(value.fps)) throw new Error('Project editor settings are invalid.')
   const faceCam: FaceCamSettings = value.faceCam || { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 }
   if (typeof faceCam.enabled !== 'boolean' || ![faceCam.x, faceCam.y, faceCam.width, faceCam.height, faceCam.size, faceCam.positionX, faceCam.positionY].every(Number.isFinite) || faceCam.x < 0 || faceCam.y < 0 || faceCam.width < .02 || faceCam.height < .02 || faceCam.x + faceCam.width > 1 || faceCam.y + faceCam.height > 1 || faceCam.size < .1 || faceCam.size > .6 || !['top','bottom','custom'].includes(faceCam.placement) || faceCam.positionX < 0 || faceCam.positionX > 1 || faceCam.positionY < 0 || faceCam.positionY > 1) throw new Error('Face camera settings are invalid.')
-  return { ...value, faceCam }
+  const zoom = value.zoom ?? 1, keyframes = value.keyframes ?? []
+  if (!Number.isFinite(zoom) || zoom < 1 || zoom > 3 || !Array.isArray(keyframes) || keyframes.length > 500 || keyframes.some(frame => !frame || ![frame.time, frame.cropX, frame.cropY, frame.zoom].every(Number.isFinite) || frame.time < 0 || frame.time > 86400 || frame.cropX < 0 || frame.cropX > 1 || frame.cropY < 0 || frame.cropY > 1 || frame.zoom < 1 || frame.zoom > 3)) throw new Error('Framing keyframes are invalid.')
+  const sortedKeyframes = keyframes.slice().sort((a, b) => a.time - b.time)
+  if (sortedKeyframes.some((frame, index) => index > 0 && frame.time - sortedKeyframes[index - 1].time < .06)) throw new Error('Framing keyframes must be at least 0.06 seconds apart.')
+  return { ...value, zoom, keyframes: sortedKeyframes, faceCam }
 }
 
 async function register(id: string, path: string, metadata?: Pick<RecentEntry, 'name' | 'category' | 'modifiedAt' | 'sourceName'>, touch = true) {

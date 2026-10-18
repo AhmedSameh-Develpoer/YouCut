@@ -26,7 +26,8 @@ export class BatchExportRunner {
   async start(input: string, outputDirectory: string, request: BatchExportRequest) {
     if (this.job?.status === 'running') throw new Error('A batch export is already running.')
     if (!input || !outputDirectory || !Array.isArray(request.clips) || request.clips.length < 1 || request.clips.length > 8) throw new Error('Choose between one and eight clips to export.')
-    if (![request.cropX, request.cropY].every(value => Number.isFinite(value) && value >= 0 && value <= 1) || typeof request.muted !== 'boolean' || ![30, 60].includes(request.fps)) throw new Error('Export settings are invalid.')
+    const zoom = request.zoom ?? 1, keyframes = request.keyframes || []
+    if (![request.cropX, request.cropY].every(value => Number.isFinite(value) && value >= 0 && value <= 1) || !Number.isFinite(zoom) || zoom < 1 || zoom > 3 || keyframes.length > 500 || keyframes.some(frame => ![frame.time,frame.cropX,frame.cropY,frame.zoom].every(Number.isFinite) || frame.time < 0 || frame.time > 86400 || frame.cropX < 0 || frame.cropX > 1 || frame.cropY < 0 || frame.cropY > 1 || frame.zoom < 1 || frame.zoom > 3) || typeof request.muted !== 'boolean' || ![30, 60].includes(request.fps)) throw new Error('Export settings are invalid.')
     if (request.clips.some(clip => typeof clip.id !== 'string' || !clip.id.trim()) || new Set(request.clips.map(clip => clip.id)).size !== request.clips.length) throw new Error('Each selected clip must have a unique identifier.')
     for (const clip of request.clips) {
       if (!Number.isFinite(clip.start) || !Number.isFinite(clip.end) || clip.start < 0 || clip.end <= clip.start || clip.end - clip.start > 300 || typeof clip.name !== 'string') throw new Error('A selected clip has invalid timing.')
@@ -90,7 +91,7 @@ export class BatchExportRunner {
     const sourceBase = basename(input, extname(input))
     const outputName = cleanName(`${sourceBase} - ${item.name}`, `Clip ${index + 1}`)
     const destination = join(job.outputDirectory, `${outputName}.mp4`)
-    const options: ExportOptions = { mediaUrl: request.mediaUrl, start: item.start, end: item.end, cropX: request.cropX, cropY: request.cropY, muted: request.muted, fps: request.fps, faceCam: request.faceCam || { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } as FaceCamSettings }
+    const options: ExportOptions = { mediaUrl: request.mediaUrl, start: item.start, end: item.end, cropX: request.cropX, cropY: request.cropY, zoom: request.zoom??1, keyframes: request.keyframes||[], muted: request.muted, fps: request.fps, faceCam: request.faceCam || { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } as FaceCamSettings }
     try {
       await this.exporter.start(input, destination, options)
       while (this.exporter.job?.status === 'running') {

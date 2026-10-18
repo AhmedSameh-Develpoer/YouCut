@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AnalysisJob, BatchExportJob, EditorSettings, PickedVideo, ProjectCategory } from '../../../shared/contracts'
 import { defaultFaceCam, useEditor } from '../state/editor'
+import { interpolateFraming } from '../../../shared/framing'
 const stamp=(v:number)=>`${Math.floor(v/60).toString().padStart(2,'0')}:${Math.floor(v%60).toString().padStart(2,'0')}`
 export function Editor({source,language,onBack,projectId,initialSettings,category,categorySaving,categoryError,onCategoryChange}:{source:PickedVideo;language:'ar'|'en';onBack:()=>void;projectId:string;initialSettings:EditorSettings;category:ProjectCategory;categorySaving:boolean;categoryError:string|null;onCategoryChange:(category:ProjectCategory)=>void}) {
   const ar=language==='ar', e=useEditor(), video=useRef<HTMLVideoElement>(null),canvas=useRef<HTMLCanvasElement>(null),stage=useRef<HTMLDivElement>(null),faceCamDrag=useRef<{x:number;y:number}|null>(null)
@@ -35,6 +36,8 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
   }
   const categoryNames:Record<ProjectCategory,string>=ar?{general:'عام',gaming:'ألعاب',podcast:'بودكاست',interview:'مقابلة',reaction:'رد فعل',education:'تعليمي'}:{general:'General',gaming:'Gaming',podcast:'Podcast',interview:'Interview',reaction:'Reaction',education:'Educational'}
   const [time,setTime]=useState(0),[playing,setPlaying]=useState(false),[buffering,setBuffering]=useState(false)
+  const currentFraming=useMemo(()=>interpolateFraming(time,e.keyframes,{cropX:e.cropX,cropY:e.cropY,zoom:e.zoom}),[time,e.keyframes,e.cropX,e.cropY,e.zoom])
+  const currentKeyframe=e.keyframes.find(frame=>Math.abs(frame.time-time)<.06)
   const [analysisJob,setAnalysisJob]=useState<AnalysisJob|null>(null),[analysisStart,setAnalysisStart]=useState(0),[analysisEnd,setAnalysisEnd]=useState(60),[analysisStarting,setAnalysisStarting]=useState(false),[selectedClips,setSelectedClips]=useState<string[]>([])
   const [batchJob,setBatchJob]=useState<BatchExportJob|null>(null),[batchStarting,setBatchStarting]=useState(false)
   const [previewUrl,setPreviewUrl]=useState(source.mediaUrl)
@@ -50,19 +53,19 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
   }
   useEffect(()=>{useEditor.getState().reset();useEditor.getState().hydrate(initialSettings);setTime(initialSettings.start);setPlaying(false);setPreviewUrl(source.mediaUrl);attemptedPreview.current=false;return()=>{void window.youcut.cancelPreview(source.mediaUrl).catch(()=>{})}},[source.mediaUrl,projectId])
   useEffect(()=>{
-    const saveBeforeClose=()=>{const state=useEditor.getState();if(state.dirty)window.youcut.flushProject(projectId,{start:state.start,end:state.end,cropX:state.cropX,cropY:state.cropY,muted:state.muted,fps:state.fps,faceCam:state.faceCam})}
+    const saveBeforeClose=()=>{const state=useEditor.getState();if(state.dirty)window.youcut.flushProject(projectId,{start:state.start,end:state.end,cropX:state.cropX,cropY:state.cropY,zoom:state.zoom,keyframes:state.keyframes,muted:state.muted,fps:state.fps,faceCam:state.faceCam})}
     window.addEventListener('beforeunload',saveBeforeClose)
     return()=>{window.removeEventListener('beforeunload',saveBeforeClose);saveBeforeClose()}
   },[projectId])
   useEffect(()=>{
     if(!e.hydrated||!e.dirty||busy)return
-    const snapshot:EditorSettings={start:e.start,end:e.end,cropX:e.cropX,cropY:e.cropY,muted:e.muted,fps:e.fps,faceCam:e.faceCam}
+    const snapshot:EditorSettings={start:e.start,end:e.end,cropX:e.cropX,cropY:e.cropY,zoom:e.zoom,keyframes:e.keyframes,muted:e.muted,fps:e.fps,faceCam:e.faceCam}
     const timer=setTimeout(()=>{
       e.setSaveStatus('saving')
       void saveSnapshot(snapshot).catch(error=>{e.setSaveStatus('error');e.setMessage(error instanceof Error?error.message:'Project save failed.')})
     },5000)
     return()=>clearTimeout(timer)
-  },[projectId,e.hydrated,e.dirty,e.start,e.end,e.cropX,e.cropY,e.muted,e.fps,e.faceCam,busy])
+  },[projectId,e.hydrated,e.dirty,e.start,e.end,e.cropX,e.cropY,e.zoom,e.keyframes,e.muted,e.fps,e.faceCam,busy])
   useEffect(()=>{
     if(e.mediaStatus!=='loading')return
     const timer=setTimeout(()=>{if(video.current?.readyState===0)e.setMediaError()},30000)
@@ -76,7 +79,8 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
         const w=Math.min(v.videoWidth,v.videoHeight*9/16),h=Math.min(v.videoHeight,v.videoWidth*16/9)
         const context=c.getContext('2d')
         if(context){
-          context.drawImage(v,(v.videoWidth-w)*e.cropX,(v.videoHeight-h)*e.cropY,w,h,0,0,c.width,c.height)
+          const cropWidth=w/currentFraming.zoom,cropHeight=h/currentFraming.zoom
+          context.drawImage(v,(v.videoWidth-cropWidth)*currentFraming.cropX,(v.videoHeight-cropHeight)*currentFraming.cropY,cropWidth,cropHeight,0,0,c.width,c.height)
           if(e.faceCam.enabled){
             const sx=v.videoWidth*e.faceCam.x,sy=v.videoHeight*e.faceCam.y,sw=v.videoWidth*e.faceCam.width,sh=v.videoHeight*e.faceCam.height
             let dw=c.width*e.faceCam.size,dh=dw/(sw/sh)
@@ -89,7 +93,7 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
       }
       frame=requestAnimationFrame(draw)
     };draw();return()=>cancelAnimationFrame(frame)
-  },[e.cropX,e.cropY,e.faceCam,source.mediaUrl])
+  },[currentFraming.cropX,currentFraming.cropY,currentFraming.zoom,e.faceCam,source.mediaUrl])
   useEffect(()=>{
     if(e.job?.status!=='running')return
     let alive=true
@@ -142,6 +146,13 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
     else if(code===2)e.setMessage(ar?'تعذر قراءة الملف المحلي. تأكد أنه متاح ثم أعد المحاولة.':'The local file could not be read. Check it is available and retry.')
   }
   const seek=(value:number)=>{if(video.current&&Number.isFinite(value)){video.current.currentTime=Math.max(0,Math.min(e.duration,value));setTime(video.current.currentTime)}}
+  const changeFraming=(field:'cropX'|'cropY'|'zoom',value:number)=>{
+    const next={...currentFraming,[field]:field==='zoom'?Math.max(1,Math.min(3,value)):Math.max(0,Math.min(1,value))}
+    if(e.keyframes.length)e.upsertKeyframe({time,cropX:next.cropX,cropY:next.cropY,zoom:next.zoom})
+    else if(field==='zoom')e.setZoom(next.zoom)
+    else e.setCrop(field,next[field])
+  }
+  const addOrUpdateKeyframe=()=>e.upsertKeyframe({time,cropX:currentFraming.cropX,cropY:currentFraming.cropY,zoom:currentFraming.zoom})
   const play=async()=>{
     const v=video.current;if(!v)return
     if(!v.paused){v.pause();return}
@@ -150,9 +161,12 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
   }
   useEffect(()=>{
     const onKeyDown=(event:KeyboardEvent)=>{
-      if(event.defaultPrevented||event.altKey||event.ctrlKey||event.metaKey)return
+      if(event.defaultPrevented||event.altKey)return
       const target=event.target
       if(target instanceof HTMLElement&&(target.isContentEditable||/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName)))return
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();if(event.shiftKey)e.redoKeyframe();else e.undoKeyframe();return}
+      if(event.ctrlKey||event.metaKey)return
+      if(event.key.toLowerCase()==='k'){if(ready&&!busy&&time>=e.start&&time<=e.end){event.preventDefault();addOrUpdateKeyframe()}return}
       if(event.code==='Space') {event.preventDefault();if(ready&&!busy)void play()}
       else if(event.key==='ArrowLeft'||event.key==='ArrowRight') {
         if(!ready||busy)return
@@ -161,11 +175,11 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
     }
     window.addEventListener('keydown',onKeyDown)
     return()=>window.removeEventListener('keydown',onKeyDown)
-  },[ready,busy,time,e.start,e.end])
+  },[ready,busy,time,e.start,e.end,e.keyframes,e.cropX,e.cropY,e.zoom])
   const exportVideo=async()=>{
     if(busy||!ready)return
     video.current?.pause();e.setChoosing(true);e.setMessage(null);e.setJob(null)
-    try{const job=await window.youcut.startExport({mediaUrl:source.mediaUrl,start:e.start,end:e.end,cropX:e.cropX,cropY:e.cropY,muted:e.muted,fps:e.fps,faceCam:e.faceCam});e.setJob(job);if(!job)e.setMessage(ar?'تم إلغاء اختيار مكان الحفظ.':'Destination selection cancelled.')}
+    try{const job=await window.youcut.startExport({mediaUrl:source.mediaUrl,start:e.start,end:e.end,cropX:e.cropX,cropY:e.cropY,zoom:e.zoom,keyframes:e.keyframes,muted:e.muted,fps:e.fps,faceCam:e.faceCam});e.setJob(job);if(!job)e.setMessage(ar?'تم إلغاء اختيار مكان الحفظ.':'Destination selection cancelled.')}
     catch(error){e.setMessage(error instanceof Error?error.message:'Export failed.')}
     finally{e.setChoosing(false)}
   }
@@ -175,7 +189,7 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
     if(selected.length===0)return
     video.current?.pause();setBatchStarting(true);setBatchJob(null);e.setMessage(null)
     try{
-      const job=await window.youcut.startBatchExport({mediaUrl:source.mediaUrl,clips:selected.map((item,index)=>({id:item.id,name:`Clip ${index+1}`,start:item.start,end:item.end})),cropX:e.cropX,cropY:e.cropY,muted:e.muted,fps:e.fps,faceCam:e.faceCam})
+      const job=await window.youcut.startBatchExport({mediaUrl:source.mediaUrl,clips:selected.map((item,index)=>({id:item.id,name:`Clip ${index+1}`,start:item.start,end:item.end})),cropX:e.cropX,cropY:e.cropY,zoom:e.zoom,keyframes:e.keyframes,muted:e.muted,fps:e.fps,faceCam:e.faceCam})
       setBatchJob(job)
       if(!job)e.setMessage(ar?'تم إلغاء اختيار مجلد التصدير.':'Batch export folder selection was cancelled.')
     }catch(error){e.setMessage(error instanceof Error?error.message:'Batch export failed to start.')}
@@ -192,13 +206,15 @@ export function Editor({source,language,onBack,projectId,initialSettings,categor
     {batchJob&&<section className="batch-export-results" aria-live="polite"><header><div><strong>{batchJob.status==='running'?(ar?'جارٍ تصدير المجموعة':'Exporting selected clips'):batchJob.status==='cancelled'?(ar?'تم إلغاء المجموعة':'Batch cancelled'):(ar?'اكتمل التصدير':'Batch export finished')}</strong><small dir="ltr">{Math.round(batchJob.progress*100)}% · {batchJob.outputDirectory}</small></div><progress max={1} value={batchJob.progress}/>{batchJob.status==='running'&&<button className="button-secondary" onClick={()=>void window.youcut.cancelBatchExport()}>{ar?'إلغاء المجموعة':'Cancel batch'}</button>}</header><div className="batch-export-items">{batchJob.items.map((item,index)=><article className={`batch-export-item ${item.status}`} key={item.id}><div><strong>{item.name}</strong><small dir="ltr">{stamp(item.start)} – {stamp(item.end)} · {item.status==='running'?`${Math.floor(item.progress*100)}%`:item.status==='complete'?(ar?'اكتمل':'Complete'):item.status==='error'?(ar?'فشل':'Failed'):item.status==='cancelled'?(ar?'ملغى':'Cancelled'):(ar?'في الانتظار':'Queued')}</small>{item.path&&<small dir="ltr">{item.path}</small>}{item.error&&<small className="error-message">{item.error}</small>}</div>{item.status==='running'&&<progress max={1} value={item.progress}/ >}{item.status==='error'&&batchJob.status!=='running'&&<button className="text-button" onClick={()=>void window.youcut.retryBatchExportItem(index).then(setBatchJob).catch(error=>e.setMessage(error instanceof Error?error.message:'Clip retry failed.'))}>{ar?'إعادة المحاولة':'Retry'}</button>}</article>)}</div></section>}
     {e.previewJob?.status==='error'&&<p className="error-message" role="alert">{e.previewJob.error}</p>}
     <section className="editor-controls"><div className="playback-row"><button className="button-secondary" disabled={!ready} onClick={()=>void play()}>{playing?(ar?'إيقاف مؤقت':'Pause'):(ar?'تشغيل المقطع':'Play clip')}</button><span dir="ltr">{stamp(time)} / {stamp(e.duration)}</span></div>
-    <label className="field-label" htmlFor="playhead">{ar?'المسطرة — اضغط أو اسحب للتحريك · مسافة تشغيل/إيقاف · الأسهم تحريك ثانية':'Timeline — click or drag to seek · Space play/pause · Arrow keys step 1 second'}</label><input id="playhead" className="timeline-seek" type="range" min={0} max={e.duration||1} step={0.01} value={time} disabled={!ready} onChange={event=>seek(Number(event.target.value))}/>
+    <label className="field-label" htmlFor="playhead">{ar?'المسطرة — اضغط أو اسحب للتحريك · مسافة تشغيل/إيقاف · الأسهم تحريك ثانية':'Timeline — click or drag to seek · Space play/pause · Arrow keys step 1 second'}</label><div className="timeline-with-keyframes"><input id="playhead" className="timeline-seek" type="range" min={0} max={e.duration||1} step={0.01} value={time} disabled={!ready} onChange={event=>seek(Number(event.target.value))}/><div className="keyframe-markers" aria-label={ar?'نقاط تحريك الكادر':'Framing keyframes'}>{e.keyframes.map((frame,index)=><button type="button" key={frame.time} className="keyframe-marker" style={{left:`${Math.max(0,Math.min(100,frame.time/(e.duration||1)*100))}%`}} title={`${stamp(frame.time)} · ${ar?'نقطة تحريك':'Framing keyframe'} ${index+1}`} aria-label={`${ar?'الانتقال لنقطة':'Go to keyframe'} ${stamp(frame.time)}`} onClick={()=>seek(frame.time)}>◆</button>)}</div></div>
+    <div className="keyframe-toolbar"><span>{ar?`${e.keyframes.length} نقاط · ${currentKeyframe?'نقطة عند المؤشر':'تحريك يدوي للكادر'}`:`${e.keyframes.length} points · ${currentKeyframe?'keyframe at playhead':'manual framing'}`}</span><div><button className="button-secondary" disabled={!ready||busy||time<e.start||time>e.end} onClick={addOrUpdateKeyframe}>{ar?(currentKeyframe?'تحديث النقطة':'إضافة نقطة · K'):(currentKeyframe?'Update point':'Add point · K')}</button><button className="text-button" disabled={!currentKeyframe||busy} onClick={()=>e.removeKeyframe(time)}>{ar?'حذف':'Delete'}</button><button className="text-button" disabled={!e.keyframeHistory.length||busy} onClick={e.undoKeyframe} title={ar?'تراجع عن تعديل النقاط':'Undo keyframe edit'}>↶</button><button className="text-button" disabled={!e.keyframeFuture.length||busy} onClick={e.redoKeyframe} title={ar?'إعادة تعديل النقاط':'Redo keyframe edit'}>↷</button></div></div>
+    {e.keyframes.length>0&&<div className="keyframe-list" aria-label={ar?'قائمة نقاط تحريك الكادر':'Framing keyframe list'}>{e.keyframes.map((frame,index)=><button className={`keyframe-chip ${currentKeyframe?.time===frame.time?'active':''}`} type="button" key={frame.time} onClick={()=>seek(frame.time)}><span dir="ltr">{stamp(frame.time)}</span><small>{ar?`نقطة ${index+1}`:`Point ${index+1}`} · {Math.round(frame.zoom*100)}%</small></button>)}</div>}
     <fieldset disabled={!ready||busy} className="trim-fields"><legend>{ar?'تحديد المقطع':'Clip selection'}</legend><label>{ar?'البداية بالثواني':'Start (seconds)'}<input type="number" min={0} max={e.end-.1} step={.1} value={Number(e.start.toFixed(2))} onChange={event=>{const value=Number(event.target.value);e.trim(value,e.end);seek(value)}}/><input aria-label={ar?'سحب بداية المقطع':'Drag clip start'} type="range" min={0} max={e.duration||1} step={.1} value={e.start} onChange={event=>{const value=Math.min(Number(event.target.value),e.end-.1);e.trim(value,e.end);seek(value)}}/><button className="text-button" onClick={()=>e.trim(time,e.end)}>{ar?'اجعل البداية هنا':'Set start here'}</button></label><label>{ar?'النهاية بالثواني':'End (seconds)'}<input type="number" min={e.start+.1} max={e.duration} step={.1} value={Number(e.end.toFixed(2))} onChange={event=>e.trim(e.start,Number(event.target.value))}/><input aria-label={ar?'سحب نهاية المقطع':'Drag clip end'} type="range" min={0} max={e.duration||1} step={.1} value={e.end} onChange={event=>e.trim(e.start,Math.max(Number(event.target.value),e.start+.1))}/><button className="text-button" onClick={()=>e.trim(e.start,time)}>{ar?'اجعل النهاية هنا':'Set end here'}</button></label><div><strong>{(e.end-e.start).toFixed(1)} {ar?'ثانية':'seconds'}</strong><p>{ar?'حد المقطع 5 دقائق':'Up to 5 minutes per clip'}</p></div></fieldset>
-    <fieldset disabled={!ready||busy} className="crop-fields"><legend>{ar?'موضع القص الرأسي — معاينة مباشرة':'Vertical framing — live preview'}</legend><label>{ar?'أفقي':'Horizontal'}<input type="range" min={0} max={1} step={.001} value={e.cropX} onChange={event=>e.setCrop('cropX',Number(event.target.value))}/></label><label>{ar?'رأسي':'Vertical'}<input type="range" min={0} max={1} step={.001} value={e.cropY} onChange={event=>e.setCrop('cropY',Number(event.target.value))}/></label><label className="mute-control"><input type="checkbox" checked={e.muted} onChange={event=>e.setMuted(event.target.checked)}/>{ar?'كتم الصوت':'Mute audio'}</label><label>FPS <select value={e.fps} onChange={event=>e.setFps(Number(event.target.value) as 30|60)}><option value={30}>30</option><option value={60}>60</option></select></label></fieldset>
+    <fieldset disabled={!ready||busy} className="crop-fields"><legend>{ar?'موضع القص الرأسي — معاينة مباشرة':'Vertical framing — live preview'}</legend><label>{ar?'أفقي':'Horizontal'}<input type="range" min={0} max={1} step={.001} value={currentFraming.cropX} onChange={event=>changeFraming('cropX',Number(event.target.value))}/></label><label>{ar?'رأسي':'Vertical'}<input type="range" min={0} max={1} step={.001} value={currentFraming.cropY} onChange={event=>changeFraming('cropY',Number(event.target.value))}/></label><label>{ar?'تكبير':'Zoom'}<input type="range" min={1} max={3} step={.01} value={currentFraming.zoom} onChange={event=>changeFraming('zoom',Number(event.target.value))}/><span>{Math.round(currentFraming.zoom*100)}%</span></label><label className="mute-control"><input type="checkbox" checked={e.muted} onChange={event=>e.setMuted(event.target.checked)}/>{ar?'كتم الصوت':'Mute audio'}</label><label>FPS <select value={e.fps} onChange={event=>e.setFps(Number(event.target.value) as 30|60)}><option value={30}>30</option><option value={60}>60</option></select></label></fieldset>
     <fieldset disabled={!ready||busy} className="facecam-fields"><legend>{ar?'كاميرا الوجه':'Face Cam'}</legend><label className="facecam-enable"><input type="checkbox" checked={e.faceCam.enabled} onChange={event=>e.setFaceCam({...e.faceCam,enabled:event.target.checked})}/>{ar?'إظهار كاميرا الوجه':'Show face camera'}</label>{e.faceCam.enabled&&<><p>{ar?'اسحب مستطيلًا حول كاميرا الوجه داخل الفيديو الأصلي، أو اضبط حجمه من أدوات التحديد.':'Drag a rectangle around the face camera in the source video, or adjust its size below.'}</p><label>{ar?'عرض المنطقة':'Region width'}<input type="range" min={.02} max={1-e.faceCam.x} step={.01} value={e.faceCam.width} onChange={event=>e.setFaceCam({...e.faceCam,width:Number(event.target.value)})}/></label><label>{ar?'ارتفاع المنطقة':'Region height'}<input type="range" min={.02} max={1-e.faceCam.y} step={.01} value={e.faceCam.height} onChange={event=>e.setFaceCam({...e.faceCam,height:Number(event.target.value)})}/></label><label>{ar?'حجمها في الناتج':'Overlay size'}<input type="range" min={.1} max={.6} step={.01} value={e.faceCam.size} onChange={event=>e.setFaceCam({...e.faceCam,size:Number(event.target.value)})}/></label><label>{ar?'مكان الظهور':'Placement'}<select value={e.faceCam.placement} onChange={event=>{const placement=event.target.value as 'top'|'bottom'|'custom';e.setFaceCam({...e.faceCam,placement,positionY:placement==='top'?.05:placement==='bottom'?.88:e.faceCam.positionY})}}><option value="top">{ar?'أعلى':'Top'}</option><option value="bottom">{ar?'أسفل':'Bottom'}</option><option value="custom">{ar?'مخصص':'Custom'}</option></select></label>{e.faceCam.placement==='custom'&&<><label>{ar?'أفقي':'Horizontal'}<input type="range" min={0} max={1} step={.01} value={e.faceCam.positionX} onChange={event=>e.setFaceCam({...e.faceCam,positionX:Number(event.target.value)})}/></label><label>{ar?'رأسي':'Vertical'}<input type="range" min={0} max={1} step={.01} value={e.faceCam.positionY} onChange={event=>e.setFaceCam({...e.faceCam,positionY:Number(event.target.value)})}/></label></>}</>}</fieldset>
-    <p className="link-help">{ar?'تكوين Face Cam يدوي وثابت محفوظ داخل المشروع؛ تتبع الوجه أو الهدف وتصحيحه بمفاتيح الحركة ما زال ضمن الخطة. تحليل تغيّر المشاهد متاح أعلاه.':'Face Cam region and placement are saved as a static manual composition. Automatic tracking and keyframe corrections remain planned. Visual scene analysis is available above.'}</p>
+    <p className="link-help">{ar?'حركة الكادر اليدوية محفوظة كنقاط Keyframes وتُستوفى بينها الحركة في المعاينة والتصدير. التتبع الآلي للوجه أو الهدف ما زال قيد التنفيذ.':'Manual framing keyframes interpolate across preview and export. Automatic face or object tracking remains in progress.'}</p>
     </section>
-    <div className="project-save-status" role="status" aria-live="polite">{e.saveStatus==='saving'?(ar?'جارٍ حفظ المشروع…':'Saving project…'):e.saveStatus==='error'?(<><span className="error-message">{ar?'تعذر حفظ المشروع':'Project could not be saved'}</span><button className="text-button" onClick={()=>{const state=useEditor.getState(),snapshot:EditorSettings={start:state.start,end:state.end,cropX:state.cropX,cropY:state.cropY,muted:state.muted,fps:state.fps,faceCam:state.faceCam};state.setSaveStatus('saving');void saveSnapshot(snapshot).catch(error=>{state.setSaveStatus('error');state.setMessage(error instanceof Error?error.message:'Project save failed.')})}}>{ar?'إعادة المحاولة':'Retry'}</button></>):e.dirty?(ar?'تعديلات غير محفوظة · الحفظ بعد 5 ثوانٍ':'Unsaved changes · saving in 5 seconds'):(ar?'تم حفظ التعديلات':'Changes saved')}</div>
+    <div className="project-save-status" role="status" aria-live="polite">{e.saveStatus==='saving'?(ar?'جارٍ حفظ المشروع…':'Saving project…'):e.saveStatus==='error'?(<><span className="error-message">{ar?'تعذر حفظ المشروع':'Project could not be saved'}</span><button className="text-button" onClick={()=>{const state=useEditor.getState(),snapshot:EditorSettings={start:state.start,end:state.end,cropX:state.cropX,cropY:state.cropY,zoom:state.zoom,keyframes:state.keyframes,muted:state.muted,fps:state.fps,faceCam:state.faceCam};state.setSaveStatus('saving');void saveSnapshot(snapshot).catch(error=>{state.setSaveStatus('error');state.setMessage(error instanceof Error?error.message:'Project save failed.')})}}>{ar?'إعادة المحاولة':'Retry'}</button></>):e.dirty?(ar?'تعديلات غير محفوظة · الحفظ بعد 5 ثوانٍ':'Unsaved changes · saving in 5 seconds'):(ar?'تم حفظ التعديلات':'Changes saved')}</div>
     {(e.job||e.message||e.exportChoosing)&&<section className="operation-status export-progress" role="status" aria-live="polite">{e.exportChoosing&&<span>{ar?'نافذة اختيار مكان الحفظ مفتوحة.':'The destination dialog is open.'}</span>}{e.job?.status==='running'&&<><progress max={1} value={e.job.progress}/><span>{Math.floor(e.job.progress*100)}%</span><button className="button-secondary" onClick={()=>void window.youcut.cancelExport()}>{ar?'إلغاء التصدير':'Cancel export'}</button></>}{e.job?.status==='complete'&&<span>{ar?'تم حفظ الفيديو: ':'Video saved: '}{e.job.path}</span>}{e.job?.status==='cancelled'&&<span>{ar?'تم إلغاء التصدير.':'Export cancelled.'}</span>}{e.job?.status==='error'&&<span className="error-message">{e.job.error}</span>}{e.message&&<span>{e.message}</span>}</section>}
   </div>
 }
