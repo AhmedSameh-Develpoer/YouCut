@@ -1,7 +1,7 @@
 {
   "name": "youcut",
   "productName": "YouCut",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "A local-first workspace for turning long videos into vertical shorts.",
   "private": true,
   "type": "module",
