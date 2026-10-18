@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promi
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, parse } from 'node:path'
 import { app, dialog } from 'electron'
-import type { EditorSettings, FaceCamSettings, ProjectCategory, ProjectDocument, RecentProject } from '../shared/contracts'
+import type { ClipFramingSettings, EditorSettings, FaceCamSettings, ProjectCategory, ProjectDocument, RecentProject } from '../shared/contracts'
 import { getBackupDirectorySync, getIgnoredRecoveryTime } from './app-settings'
 import { recordActivity } from './activity-log'
 
@@ -100,10 +100,18 @@ function validateEditor(value: EditorSettings) {
   if (sortedKeyframes.some((frame, index) => index > 0 && frame.time - sortedKeyframes[index - 1].time < .06)) throw new Error('Framing keyframes must be at least 0.06 seconds apart.')
   let analysis = value.analysis
   if (analysis !== undefined) {
-    if (!analysis || !analysis.range || ![analysis.range.start, analysis.range.end].every(Number.isFinite) || analysis.range.start < 0 || analysis.range.end <= analysis.range.start || analysis.range.end - analysis.range.start > 300 || !Array.isArray(analysis.sceneChanges) || analysis.sceneChanges.length > 10000 || analysis.sceneChanges.some(time => !Number.isFinite(time) || time < analysis!.range.start || time > analysis!.range.end) || !Array.isArray(analysis.suggestions) || analysis.suggestions.length > 1000 || analysis.suggestions.some(item => !item || typeof item.id !== 'string' || item.id.length > 100 || ![item.start, item.end, item.score].every(Number.isFinite) || item.start < analysis!.range.start || item.end > analysis!.range.end || item.end <= item.start || item.score < 0 || item.score > 100 || typeof item.reason !== 'string' || item.reason.length > 500) || !Array.isArray(analysis.selectedIds) || analysis.selectedIds.length > 1000 || analysis.selectedIds.some(id => !analysis!.suggestions.some(item => item.id === id))) throw new Error('Saved scene analysis is invalid.')
-    analysis = { ...analysis, sceneChanges: [...new Set(analysis.sceneChanges)].sort((a,b)=>a-b), suggestions: analysis.suggestions.slice(), selectedIds: [...new Set(analysis.selectedIds)] }
+    if (!analysis || !analysis.range || ![analysis.range.start, analysis.range.end].every(Number.isFinite) || analysis.range.start < 0 || analysis.range.end <= analysis.range.start || analysis.range.end - analysis.range.start > 300 || !Array.isArray(analysis.sceneChanges) || analysis.sceneChanges.length > 10000 || analysis.sceneChanges.some(time => !Number.isFinite(time) || time < analysis!.range.start || time > analysis!.range.end) || !Array.isArray(analysis.suggestions) || analysis.suggestions.length > 1000 || analysis.suggestions.some(item => !item || typeof item.id !== 'string' || item.id.length > 100 || ![item.start, item.end, item.score].every(Number.isFinite) || item.start < analysis!.range.start || item.end > analysis!.range.end || item.end <= item.start || item.score < 0 || item.score > 100 || typeof item.reason !== 'string' || item.reason.length > 500 || (item.framing !== undefined && !isValidClipFraming(item.framing))) || new Set(analysis.suggestions.map(item=>item.id)).size !== analysis.suggestions.length || !Array.isArray(analysis.selectedIds) || analysis.selectedIds.length > 1000 || analysis.selectedIds.some(id => !analysis!.suggestions.some(item => item.id === id))) throw new Error('Saved scene analysis is invalid.')
+    analysis = { ...analysis, sceneChanges: [...new Set(analysis.sceneChanges)].sort((a,b)=>a-b), suggestions: analysis.suggestions.map(item => ({...item,...(item.framing?{framing:validateClipFraming(item.framing)}:{})})), selectedIds: [...new Set(analysis.selectedIds)] }
   }
   return { ...value, zoom, keyframes: sortedKeyframes, trackingLosses: [...new Set(trackingLosses)].sort((a,b)=>a-b), faceCam, ...(analysis ? { analysis } : {}) }
+}
+
+function validateClipFraming(value: ClipFramingSettings): ClipFramingSettings {
+  const normalized=validateEditor({start:0,end:1,cropX:value.cropX,cropY:value.cropY,zoom:value.zoom,keyframes:value.keyframes,trackingLosses:value.trackingLosses,muted:false,fps:30,faceCam:value.faceCam})
+  return {cropX:normalized.cropX,cropY:normalized.cropY,zoom:normalized.zoom??1,keyframes:normalized.keyframes??[],trackingLosses:normalized.trackingLosses??[],faceCam:normalized.faceCam}
+}
+function isValidClipFraming(value: ClipFramingSettings) {
+  try { validateClipFraming(value); return true } catch { return false }
 }
 
 async function register(id: string, path: string, metadata?: Pick<RecentEntry, 'name' | 'category' | 'modifiedAt' | 'sourceName'>, touch = true) {

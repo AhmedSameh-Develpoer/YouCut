@@ -19,6 +19,9 @@ import { validateVideoUrl } from './link-import-utils'
 // Keep userData stable between development and packaged builds so Recent projects,
 // settings, and diagnostics resolve to the same YouCut folder.
 app.setName('YouCut')
+// Do not let a development or portable build derive a different profile path
+// from its executable folder or package metadata.
+app.setPath('userData', join(app.getPath('appData'), 'YouCut'))
 const media = new Map<string, string>()
 const runner = new ExportRunner()
 const batchRunner = new BatchExportRunner(runner)
@@ -121,7 +124,11 @@ ipcMain.handle('project:create', async (_event, mediaUrl: string, projectName: s
   recordActivity({ level: 'info', event: 'project-created', operationId: project.projectId })
   return { project, source: { path: sourcePath, name: basename(sourcePath), sizeBytes: details.size, mediaUrl } }
 })
-ipcMain.handle('project:list', () => listProjects())
+ipcMain.handle('project:list', async () => {
+  const projects = await listProjects()
+  recordActivity({ level: 'info', event: 'recent-projects-loaded', details: `count=${projects.length}` })
+  return projects
+})
 ipcMain.handle('project:category:update', async (_event, projectId: string, category: ProjectCategory) => {
   try {
     const project = await updateProjectCategory(projectId, category)

@@ -21,7 +21,7 @@ export const useWorkspace = create<{
   screen: 'projects', importStatus: 'idle', source: null,
   error: null, language: 'en', languageTouched: false,
   currentProjectId: null, currentProjectCategory: null, categorySaving: false, categoryError: null,
-  currentSettings: null, projects: [], projectsLoading: false, projectsError: null, projectOperation: 'idle',
+  currentSettings: null, projects: [], projectsLoading: true, projectsError: null, projectOperation: 'idle',
   goTo: (screen) => { pickerRequest++; set({ screen, importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'link-ready' : 'idle', error: null }) },
   toggleLanguage: () => set((s) => ({ language: s.language === 'en' ? 'ar' : 'en', languageTouched: true })),
   setSystemLanguage: (language) => set((s) => s.languageTouched ? {} : { language }),

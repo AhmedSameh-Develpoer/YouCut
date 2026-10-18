@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 const { createPackage } = require('@electron/asar')
 
 function isWithin(parent, child) {
@@ -38,6 +39,11 @@ async function main() {
     'This portable package is unsigned and is not an installer.',
     '',
   ].join('\r\n'), 'utf8')
+  if (process.platform === 'win32') {
+    // Electron's sandbox checks every executable/resource in the portable
+    // directory. Workspace or inherited ACLs can omit this read-only SID.
+    execFileSync('icacls', [destination, '/grant', '*S-1-15-2-1:(OI)(CI)(RX)', '/T'], { windowsHide: true, stdio: 'pipe' })
+  }
   await fs.rm(stage, { recursive: true, force: true })
   const executable = await fs.stat(path.join(destination, 'YouCut.exe'))
   const archive = await fs.stat(path.join(destination, 'resources/app.asar'))

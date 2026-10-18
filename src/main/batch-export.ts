@@ -31,6 +31,7 @@ export class BatchExportRunner {
     if (request.clips.some(clip => typeof clip.id !== 'string' || !clip.id.trim()) || new Set(request.clips.map(clip => clip.id)).size !== request.clips.length) throw new Error('Each selected clip must have a unique identifier.')
     for (const clip of request.clips) {
       if (!Number.isFinite(clip.start) || !Number.isFinite(clip.end) || clip.start < 0 || clip.end <= clip.start || clip.end - clip.start > 300 || typeof clip.name !== 'string') throw new Error('A selected clip has invalid timing.')
+      if (clip.framing && (![clip.framing.cropX,clip.framing.cropY].every(value=>Number.isFinite(value)&&value>=0&&value<=1) || !Number.isFinite(clip.framing.zoom) || clip.framing.zoom<1 || clip.framing.zoom>3 || !Array.isArray(clip.framing.keyframes) || !Array.isArray(clip.framing.trackingLosses) || !clip.framing.faceCam)) throw new Error('A selected clip has invalid framing settings.')
     }
 
     this.cancelled = false
@@ -91,7 +92,8 @@ export class BatchExportRunner {
     const sourceBase = basename(input, extname(input))
     const outputName = cleanName(`${sourceBase} - ${item.name}`, `Clip ${index + 1}`)
     const destination = join(job.outputDirectory, `${outputName}.mp4`)
-    const options: ExportOptions = { mediaUrl: request.mediaUrl, start: item.start, end: item.end, cropX: request.cropX, cropY: request.cropY, zoom: request.zoom??1, keyframes: request.keyframes||[], muted: request.muted, fps: request.fps, faceCam: request.faceCam || { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } as FaceCamSettings }
+    const framing=item.framing
+    const options: ExportOptions = { mediaUrl: request.mediaUrl, start: item.start, end: item.end, cropX: framing?.cropX??request.cropX, cropY: framing?.cropY??request.cropY, zoom: framing?.zoom??request.zoom??1, keyframes: framing?.keyframes??request.keyframes??[], muted: request.muted, fps: request.fps, faceCam: framing?.faceCam??request.faceCam??{ enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } as FaceCamSettings }
     try {
       await this.exporter.start(input, destination, options)
       while (this.exporter.job?.status === 'running') {
