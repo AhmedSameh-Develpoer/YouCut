@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+build/tech-validation/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+Ashe Strikes the Armored Golem.png
