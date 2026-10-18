@@ -25,6 +25,8 @@ async function main() {
     fs.copyFile(path.join(root, 'package.json'), path.join(stage, 'package.json')),
   ])
   await fs.mkdir(path.join(destination, 'resources'), { recursive: true })
+  await fs.mkdir(path.join(destination, 'resources', 'bin'), { recursive: true })
+  await fs.copyFile(path.join(root, 'build', 'vendor', 'yt-dlp.exe'), path.join(destination, 'resources', 'bin', 'yt-dlp.exe'))
   await createPackage(stage, path.join(destination, 'resources/app.asar'))
   await fs.writeFile(path.join(destination, 'README-PORTABLE.txt'), [
     `YouCut ${manifest.version} — portable review build`,
@@ -32,6 +34,7 @@ async function main() {
     'Run YouCut.exe from this folder. Keep the folder contents together.',
     'Project files, backups, and activity logs are stored in your Windows user profile.',
     'FFmpeg is not included. The app detects common local installations or PATH; set FFMPEG_PATH if needed.',
+    'yt-dlp is included from the official release and is licensed under the Unlicense; source: https://github.com/yt-dlp/yt-dlp. Link imports require internet access.',
     'This portable package is unsigned and is not an installer.',
     '',
   ].join('\r\n'), 'utf8')

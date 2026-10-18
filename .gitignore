@@ -4,6 +4,7 @@ dist/
 dist-review/
 dist-final/
 build/tech-validation/
+build/vendor/
 *.mp4
 *.mov
 *.mkv

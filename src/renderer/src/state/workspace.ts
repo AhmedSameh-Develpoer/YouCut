@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { EditorSettings, ProjectCategory, RecentProject, VideoSource } from '../../../shared/contracts'
+import type { EditorSettings, OpenProject, ProjectCategory, RecentProject, VideoSource } from '../../../shared/contracts'
 
 type Screen = 'projects' | 'import' | 'ready'
-type ImportStatus = 'idle' | 'choosing' | 'ready' | 'unsupported' | 'error'
+type ImportStatus = 'idle' | 'choosing' | 'ready' | 'link-ready' | 'error'
 let pickerRequest = 0
 
 export const useWorkspace = create<{
@@ -14,6 +14,7 @@ export const useWorkspace = create<{
   setSystemLanguage: (language: 'en' | 'ar') => void
   pickVideo: () => Promise<void>; cancelImport: () => void
   setVideoLink: (url: string) => void; continueToWorkspace: (category: ProjectCategory) => Promise<void>
+  acceptImportedProject: (opened: OpenProject) => void
   clearSource: () => void; updateProjectCategory: (category: ProjectCategory) => Promise<void>; loadRecentProjects: () => Promise<void>; openProject: (id: string) => Promise<void>
   openProjectFile: (expectedProjectId?: string) => Promise<void>
 }>((set, get) => ({
@@ -21,7 +22,7 @@ export const useWorkspace = create<{
   error: null, language: 'en', languageTouched: false,
   currentProjectId: null, currentProjectCategory: null, categorySaving: false, categoryError: null,
   currentSettings: null, projects: [], projectsLoading: false, projectsError: null, projectOperation: 'idle',
-  goTo: (screen) => { pickerRequest++; set({ screen, importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'unsupported' : 'idle', error: null }) },
+  goTo: (screen) => { pickerRequest++; set({ screen, importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'link-ready' : 'idle', error: null }) },
   toggleLanguage: () => set((s) => ({ language: s.language === 'en' ? 'ar' : 'en', languageTouched: true })),
   setSystemLanguage: (language) => set((s) => s.languageTouched ? {} : { language }),
   pickVideo: async () => {
@@ -32,13 +33,13 @@ export const useWorkspace = create<{
     try {
       const source = await Promise.race([window.youcut.pickVideo(), new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('PICKER_TIMEOUT')), 60000) })])
       if (request !== pickerRequest) return
-      if (!source) { set({ importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'unsupported' : 'idle' }); return }
+      if (!source) { set({ importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'link-ready' : 'idle' }); return }
       set({ source: { kind: 'file', ...source }, importStatus: 'ready', screen: 'import' })
     } catch {
       if (request === pickerRequest) set({ importStatus: 'error', error: 'picker' })
     } finally { clearTimeout(timeout) }
   },
-  cancelImport: () => { pickerRequest++; set({ importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'unsupported' : 'idle', error: null }) },
+  cancelImport: () => { pickerRequest++; set({ importStatus: get().source?.kind === 'file' ? 'ready' : get().source ? 'link-ready' : 'idle', error: null }) },
   setVideoLink: (url) => {
     pickerRequest++
     const trimmed = url.trim()
@@ -46,7 +47,7 @@ export const useWorkspace = create<{
     try {
       const parsed = new URL(trimmed)
       if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) throw new Error()
-      set({ source: { kind: 'link', url: parsed.toString(), name: parsed.hostname }, importStatus: 'unsupported', error: null })
+      set({ source: { kind: 'link', url: parsed.toString(), name: parsed.hostname }, importStatus: 'link-ready', error: null })
     } catch { set({ source: null, importStatus: 'error', error: 'invalid-link' }) }
   },
   continueToWorkspace: async (category) => {
@@ -61,6 +62,7 @@ export const useWorkspace = create<{
     } catch (error) { set({ projectsError: error instanceof Error ? error.message : 'Project could not be created.' }) }
     finally { set({ projectOperation: 'idle' }) }
   },
+  acceptImportedProject: (opened) => set({ source: { kind: 'file', ...opened.source }, currentProjectId: opened.project.projectId, currentProjectCategory: opened.project.category, categoryError: null, currentSettings: opened.project.editor, screen: 'ready', importStatus: 'ready', error: null }),
   clearSource: () => { pickerRequest++; set({ source: null, currentProjectId: null, currentProjectCategory: null, categoryError: null, currentSettings: null, importStatus: 'idle', screen: 'projects', error: null }) },
   updateProjectCategory: async (category) => {
     const projectId = get().currentProjectId

@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { YouCutDesktopApi } from '../shared/contracts'
 const desktopApi: YouCutDesktopApi = {
   pickVideo: () => ipcRenderer.invoke('media:pick-video'),
+  startLinkImport: (url, category) => ipcRenderer.invoke('import:link:start', url, category),
+  getLinkImportJob: () => ipcRenderer.invoke('import:link:status'),
+  cancelLinkImport: () => ipcRenderer.invoke('import:link:cancel'),
   createProject: (url, name, category) => ipcRenderer.invoke('project:create', url, name, category),
   updateProjectCategory: (id, category) => ipcRenderer.invoke('project:category:update', id, category),
   listProjects: () => ipcRenderer.invoke('project:list'),

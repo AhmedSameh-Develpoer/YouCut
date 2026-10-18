@@ -13,17 +13,23 @@ import { chooseBackupDirectory, getBackupSettings, getLastExportDirectorySync, m
 import type { BatchExportRequest, ExportOptions, ProjectCategory } from '../shared/contracts'
 import { BatchExportRunner } from './batch-export'
 import { chooseProjectPath, createProject, flushProject, listProjects, loadProjectRegistry, readProject, registerProjectFile, relinkProject, restoreProjectSnapshot, saveProject, updateProjectCategory } from './projects'
+import { LinkImportRunner } from './link-import'
+import { validateVideoUrl } from './link-import-utils'
+// Keep userData stable between development and packaged builds so Recent projects,
+// settings, and diagnostics resolve to the same YouCut folder.
+app.setName('YouCut')
 const media = new Map<string, string>()
 const runner = new ExportRunner()
 const batchRunner = new BatchExportRunner(runner)
 const previews = new PreviewRunner()
 const analysis = new SceneAnalysisRunner()
+const linkImport = new LinkImportRunner()
 const originalTokens = new Set<string>()
 let quitting = false
 let exportDialogOpen = false
 protocol.registerSchemesAsPrivileged([{ scheme: 'youcut-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }])
 const currentDirectory = fileURLToPath(new URL('.', import.meta.url))
-let observedAnalysis = '', observedExport = '', observedBatch = ''
+let observedAnalysis = '', observedExport = '', observedBatch = '', observedLinkImport = ''
 
 process.on('uncaughtException', error => { recordActivity({ level: 'error', event: 'main-process-uncaught-exception', details: error.message }); process.exit(1) })
 process.on('unhandledRejection', reason => { recordActivity({ level: 'error', event: 'main-process-unhandled-rejection', details: reason instanceof Error ? reason.message : String(reason) }); process.exit(1) })
@@ -73,6 +79,35 @@ ipcMain.handle('media:pick-video', async () => {
   originalTokens.add(token)
   return { path, name: basename(path), sizeBytes: details.size, mediaUrl: `youcut-media://${token}/video` }
 })
+
+ipcMain.handle('import:link:start', async (_event, rawUrl: string, category: ProjectCategory) => {
+  const url = validateVideoUrl(rawUrl)
+  if (!['general','gaming','podcast','interview','reaction','education'].includes(category)) throw new Error('Choose a valid project category.')
+  const projectName = `${new URL(url).hostname} Project`
+  const projectPath = await chooseProjectPath(projectName)
+  if (!projectPath) return null
+  const projectId = randomUUID()
+  const job = linkImport.start({ url, projectPath, projectId, name: projectName, category }, async (sourcePath, id) => {
+    const details = await stat(sourcePath)
+    const name = basename(sourcePath).replace(/\.[^.]+$/, '') || projectName
+    const project = await createProject(projectPath, sourcePath, details.size, details.mtime.toISOString(), name, category, id)
+    const token = randomUUID(), source = { path: sourcePath, name: basename(sourcePath), sizeBytes: details.size, mediaUrl: `youcut-media://${token}/video` }
+    media.set(token, sourcePath); originalTokens.add(token)
+    recordActivity({ level: 'info', event: 'link-video-imported', operationId: id, details: `Project ${id} imported from ${new URL(url).hostname}.` })
+    return { project, source }
+  })
+  recordActivity({ level: 'info', event: 'link-video-import-started', operationId: job.id, details: `Host ${new URL(url).hostname}.` })
+  return job
+})
+ipcMain.handle('import:link:status', () => {
+  const job = linkImport.snapshot()
+  if (job && job.status !== 'running' && observedLinkImport !== `${job.id}:${job.status}`) {
+    observedLinkImport = `${job.id}:${job.status}`
+    recordActivity({ level: job.status === 'error' ? 'error' : 'info', event: `link-import-${job.status}`, operationId: job.id, details: job.error })
+  }
+  return job
+})
+ipcMain.handle('import:link:cancel', () => linkImport.cancel())
 
 ipcMain.handle('project:create', async (_event, mediaUrl: string, projectName: string, category: ProjectCategory) => {
   const token = new URL(mediaUrl).hostname, sourcePath = media.get(token)
@@ -273,7 +308,7 @@ ipcMain.handle('preview:status', (_event, mediaUrl: string) => {
 ipcMain.handle('preview:cancel', (_event, mediaUrl: string) => {
   if (media.get(new URL(mediaUrl).hostname) === previews.source) previews.cancel()
 })
-app.on('before-quit', () => { runner.cancel(); batchRunner.cancel(); previews.cancel(); analysis.cancel() })
+app.on('before-quit', () => { runner.cancel(); batchRunner.cancel(); previews.cancel(); analysis.cancel(); linkImport.cancel() })
 app.on('will-quit', event => {
   if (quitting) { markCleanExit(); return }
   event.preventDefault()

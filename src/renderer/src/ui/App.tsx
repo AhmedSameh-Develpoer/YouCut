@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useEditor } from '../state/editor'
 import { Editor } from './Editor'
 import { useWorkspace } from '../state/workspace'
-import type { ActivityEntry, BackupSettings, ProjectCategory } from '../../../shared/contracts'
+import type { ActivityEntry, BackupSettings, LinkImportJob, ProjectCategory } from '../../../shared/contracts'
 
 const copy = {
   en: {
@@ -10,7 +10,7 @@ const copy = {
     empty: 'Your next good clip starts here.', emptyHelp: 'Choose a video from your computer to begin a project.',
     newProject: 'New project', importTitle: 'Bring in your source', importHelp: 'Paste a video link or choose a file from your computer.',
     chooseVideo: 'Choose video', choosing: 'Opening file picker…', supported: 'MP4, MOV, MKV, WebM, AVI and other FFmpeg-readable formats', back: 'Projects', switchToLight: 'Use light theme', switchToDark: 'Use dark theme',
-    linkLabel: 'Video link', linkPlaceholder: 'Paste a YouTube, Twitch, TikTok or other video link', linkHelp: 'Link downloading is not connected yet; local video import works now.', next: 'Next',
+    linkLabel: 'Video link', linkPlaceholder: 'Paste a YouTube, Drive, Twitch, TikTok or Instagram link', linkHelp: 'Public video links are downloaded to this project on your device. Private links and live streams are not supported.', importLink: 'Download and open', chooseProjectLocation: 'Choose project location…', checkingLink: 'Checking video link…', downloadingLink: 'Downloading video', savingLinkProject: 'Saving project…', cancelDownload: 'Cancel download', linkCancelled: 'Download cancelled. Your project was not created.',
     fileReady: 'Source selected', fileHelp: 'Source selected. Create a project to open it in the editor.',
     changeVideo: 'Choose another video', exportFolder: 'Choose export location', exportReady: 'Export location',
     noExport: 'Video processing is not connected yet.', app: 'Local video workspace', version: 'App shell', error: 'Something went wrong',
@@ -21,7 +21,7 @@ const copy = {
     empty: 'مقطعك الجاي يبدأ من هنا.', emptyHelp: 'اختار فيديو من جهازك عشان تبدأ مشروع.',
     newProject: 'مشروع جديد', importTitle: 'أضف الفيديو', importHelp: 'الصق رابط الفيديو أو اختار ملف من جهازك.',
     chooseVideo: 'اختيار فيديو', choosing: 'جارٍ فتح نافذة الملفات…', supported: 'MP4 وMOV وMKV وWebM وAVI وصيغ أخرى قابلة للقراءة عبر FFmpeg', back: 'المشاريع', switchToLight: 'استخدم المظهر الفاتح', switchToDark: 'استخدم المظهر الداكن',
-    linkLabel: 'رابط الفيديو', linkPlaceholder: 'الصق رابط YouTube أو Twitch أو TikTok أو غيره', linkHelp: 'تنزيل الفيديو من الرابط لسه غير مربوط؛ استيراد الملفات المحلية يعمل.', next: 'التالي',
+    linkLabel: 'رابط الفيديو', linkPlaceholder: 'الصق رابط YouTube أو Drive أو Twitch أو TikTok أو Instagram', linkHelp: 'سيُنزل الفيديو العام محليًا داخل بيانات المشروع. الروابط الخاصة والبث المباشر غير مدعومين.', importLink: 'نزّل الفيديو وافتحه', chooseProjectLocation: 'اختار مكان ملف المشروع…', checkingLink: 'جارٍ التحقق من رابط الفيديو…', downloadingLink: 'جارٍ تنزيل الفيديو', savingLinkProject: 'جارٍ حفظ المشروع…', cancelDownload: 'إلغاء التنزيل', linkCancelled: 'تم إلغاء التنزيل ولم يتم إنشاء مشروع.',
     fileReady: 'تم اختيار المصدر', fileHelp: 'تم اختيار المصدر. أنشئ مشروعًا لفتحه في المحرر.',
     changeVideo: 'اختيار فيديو آخر', exportFolder: 'اختيار مكان التصدير', exportReady: 'مكان التصدير',
     noExport: 'معالجة الفيديو لم تُربط بعد.', app: 'مساحة فيديو محلية', version: 'هيكل التطبيق', error: 'حصلت مشكلة',
@@ -52,11 +52,11 @@ export function App() {
   const [backupSettings, setBackupSettings] = useState<BackupSettings|null>(null)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [settingsError, setSettingsError] = useState('')
-  const [videoLink, setVideoLinkInput] = useState('')
+  const [videoLink, setVideoLinkInput] = useState(''), [linkStarting, setLinkStarting] = useState(false), [linkJob, setLinkJob] = useState<LinkImportJob|null>(null)
   const [category, setCategory] = useState<ProjectCategory>('general')
   const [theme, setTheme] = useState<'dark'|'light'>(() => { try { return localStorage.getItem('youcut-theme') === 'light' ? 'light' : 'dark' } catch { return 'dark' } })
   const ar = language === 'ar'
-  const busy = importStatus === 'choosing'
+  const busy = importStatus === 'choosing', linkBusy = linkStarting || linkJob?.status === 'running'
   useEffect(() => {
     const onError = (event: ErrorEvent) => { void window.youcut.recordUiError(event.message || 'Renderer error.') }
     const onRejection = (event: PromiseRejectionEvent) => { void window.youcut.recordUiError(event.reason instanceof Error ? event.reason.message : String(event.reason)) }
@@ -67,7 +67,11 @@ export function App() {
   const categoryNames: Record<ProjectCategory,string> = ar?{general:'عام',gaming:'ألعاب',podcast:'بودكاست',interview:'مقابلة',reaction:'رد فعل',education:'تعليمي'}:{general:'General',gaming:'Gaming',podcast:'Podcast',interview:'Interview',reaction:'Reaction',education:'Educational'}
   const categoryTips: Record<ProjectCategory,string> = ar?{general:'سيبحث التحليل عن لحظات متنوعة بدون فلتر مسبق.',gaming:'نصيحة: اختر الشخصية أو اللاعب كهدف للكادر عند توفر التتبع.',podcast:'نصيحة: ركّز على المتحدث أو استخدم كادرًا يظهر الشخصين.',interview:'نصيحة: احتفظ بتبديل المتحدثين واضحًا واختر كادرًا يناسب الطرفين.',reaction:'نصيحة: احتفظ بالمحتوى الأساسي وأضف كاميرا الوجه عند الحاجة.',education:'نصيحة: ابحث عن الشرح والنقاط المهمة، مع إبقاء كل الأنواع متاحة.'}:{general:'Analysis will look for varied moments without a preset filter.',gaming:'Tip: choose the player or character as the framing target when tracking is available.',podcast:'Tip: focus on the active speaker or use a frame that shows both people.',interview:'Tip: keep speaker changes clear and choose a frame that fits both people.',reaction:'Tip: keep the source content visible and add face camera when useful.',education:'Tip: look for explanations and key points while keeping all moment types available.'}
   const statusText = projectOperation === 'creating' ? (ar ? 'اختار مكان حفظ ملف المشروع .youcut.' : 'Choose where to save the .youcut project file.') : busy ? (ar ? 'نافذة الملفات مفتوحة؛ اختار فيديو أو اقفل النافذة للرجوع.' : 'File picker is open. Choose a video or close the dialog.')
-    : importStatus === 'unsupported' ? (ar ? 'صيغة الرابط صحيحة. تنزيل الروابط غير متاح بعد؛ لم يبدأ أي تحميل. اختار ملفًا محليًا للمتابعة.' : 'Valid link format. Link downloads are not available yet; no download is running. Choose a local file to continue.')
+    : linkStarting ? t.chooseProjectLocation
+    : linkJob?.status === 'running' ? (linkJob.stage==='checking'?t.checkingLink:linkJob.stage==='saving'?t.savingLinkProject:`${t.downloadingLink} · ${Math.floor(linkJob.progress*100)}%`)
+    : linkJob?.status === 'error' ? (linkJob.error || (ar?'تعذر تنزيل الرابط.':'Link download failed.'))
+    : linkJob?.status === 'cancelled' ? t.linkCancelled
+    : importStatus === 'link-ready' ? (ar ? 'الرابط صالح مبدئيًا. اضغط «نزّل الفيديو وافتحه» للمتابعة.' : 'The link looks valid. Download it and open a project to continue.')
     : importStatus === 'ready' ? (ar ? 'تم اختيار الملف. اضغط التالي للمتابعة.' : 'File selected. Click Next to continue.')
     : error ? (ar ? (error === 'invalid-link' ? 'اكتب رابطًا كاملًا يبدأ بـ https:// أو اختار ملفًا.' : 'تعذر اختيار الملف أو انتهت المهلة. اقفل أي نافذة ملفات مفتوحة وأعد المحاولة.') : (error === 'invalid-link' ? 'Enter a complete https:// link or choose a file.' : 'File selection failed or timed out. Close any open dialog and retry.'))
     : (ar ? 'في انتظار اختيار فيديو. لا يوجد تحميل جارٍ.' : 'Waiting for a video. No download is running.')
@@ -91,6 +95,34 @@ export function App() {
 
   useEffect(() => { void loadRecentProjects() }, [loadRecentProjects])
 
+  const importVideoLink = async () => {
+    if (source?.kind !== 'link' || linkBusy) return
+    setLinkStarting(true); setLinkJob(null)
+    try {
+      const job = await window.youcut.startLinkImport(source.url, category)
+      setLinkJob(job || { id: 'cancelled', status: 'cancelled', stage: 'checking', progress: 0, message: t.linkCancelled })
+    } catch (error) {
+      setLinkJob({ id: 'failed', status: 'error', stage: 'checking', progress: 0, error: error instanceof Error ? error.message : 'Link import failed.' })
+    } finally { setLinkStarting(false) }
+  }
+
+  useEffect(() => {
+    if (linkJob?.status !== 'running') return
+    let active = true
+    const timer = setInterval(() => {
+      void window.youcut.getLinkImportJob().then(job => {
+        if (!active || !job) return
+        setLinkJob(job)
+        if (job.status === 'complete' && job.opened) {
+          useWorkspace.getState().acceptImportedProject(job.opened)
+          setVideoLinkInput('')
+          void loadRecentProjects()
+        }
+      }).catch(error => { if (active) setLinkJob(current => current ? { ...current, status: 'error', error: error instanceof Error ? error.message : 'Import status is unavailable.' } : current) })
+    }, 400)
+    return () => { active = false; clearInterval(timer) }
+  }, [linkJob?.status, loadRecentProjects])
+
   return (
     <main className="app" dir={language === 'ar' ? 'rtl' : 'ltr'}>
       <header className="topbar">
@@ -110,7 +142,7 @@ export function App() {
         )}
 
         {screen === 'import' && (
-          <div className="import-page fade-in"><button className="back-button" onClick={() => goTo('projects')}>← <span>{t.back}</span></button><div className="import-card"><div className="import-icon">↥</div><p className="eyebrow">NEW PROJECT</p><h1>{t.importTitle}</h1><p className="subheading">{t.importHelp}</p><label className="field-label" htmlFor="project-category">{ar?'فئة المحتوى':'Content category'}</label><select id="project-category" className="category-select" value={category} onChange={event=>setCategory(event.target.value as ProjectCategory)}>{(['general','gaming','podcast','interview','reaction','education'] as ProjectCategory[]).map(value=><option key={value} value={value}>{categoryNames[value]}</option>)}</select><p className="link-help category-tip">{categoryTips[category]}</p><label className="field-label" htmlFor="video-link">{t.linkLabel}</label><input disabled={busy||projectOperation!=='idle'} aria-describedby="import-status" className="link-input" id="video-link" type="url" dir="ltr" value={videoLink} onChange={(event) => { setVideoLinkInput(event.target.value); setVideoLink(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && importStatus === 'ready') void continueToWorkspace(category) }} placeholder={t.linkPlaceholder} /><p className="link-help">{t.linkHelp}</p><div className="import-divider"><span>{ar ? 'أو' : 'OR'}</span></div><button className="button-secondary choose-button" onClick={() => void pickVideo()} disabled={busy||projectOperation!=='idle'} aria-busy={busy}><span aria-hidden="true" className={busy ? 'spinner' : ''}>{busy ? '' : '＋'}</span>{importStatus === 'choosing' ? t.choosing : t.chooseVideo}</button><p className="file-types">{t.supported}</p><p className="local-note"><span className="local-dot" />{t.app}</p>{source && <section className="source-card selected-source"><div className="source-thumb"><span>▶</span></div><div className="source-info"><strong>{source.name}</strong><small>{source.kind === 'file' ? t.fileSource : t.linkSource}</small><small className="path-text">{source.kind === 'file' ? source.path : source.url}</small></div></section>}<button className="button-primary next-button" onClick={() => void continueToWorkspace(category)} disabled={importStatus !== 'ready'||projectOperation!=='idle'} aria-busy={projectOperation==='creating'}>{projectOperation==='creating'&&<span className="spinner"/>}{projectOperation==='creating'?(ar?'جارٍ إنشاء المشروع…':'Creating project…'):(ar?'فتح المحرر':'Open editor')}<span aria-hidden="true"> →</span></button><div id="import-status" className="operation-status" role="status" aria-live="polite" aria-atomic="true">{(busy||projectOperation==='creating') && <span className="spinner" aria-hidden="true" />}<span>{statusText}</span></div>{busy && <button className="text-button" onClick={cancelImport}>{ar ? 'إلغاء الانتظار' : 'Cancel waiting'}</button>}{projectsError&&<p className="error-message" role="alert">{projectsError}</p>}</div></div>
+          <div className="import-page fade-in"><button className="back-button" disabled={linkBusy||linkStarting} onClick={() => goTo('projects')}>← <span>{t.back}</span></button><div className="import-card"><div className="import-icon">↥</div><p className="eyebrow">NEW PROJECT</p><h1>{t.importTitle}</h1><p className="subheading">{t.importHelp}</p><label className="field-label" htmlFor="project-category">{ar?'فئة المحتوى':'Content category'}</label><select id="project-category" className="category-select" value={category} disabled={linkBusy||linkStarting} onChange={event=>setCategory(event.target.value as ProjectCategory)}>{(['general','gaming','podcast','interview','reaction','education'] as ProjectCategory[]).map(value=><option key={value} value={value}>{categoryNames[value]}</option>)}</select><p className="link-help category-tip">{categoryTips[category]}</p><label className="field-label" htmlFor="video-link">{t.linkLabel}</label><input disabled={busy||linkBusy||linkStarting||projectOperation!=='idle'} aria-describedby="import-status" className="link-input" id="video-link" type="url" dir="ltr" value={videoLink} onChange={(event) => { setVideoLinkInput(event.target.value); setLinkJob(null); setVideoLink(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter') { if (source?.kind==='link'&&importStatus==='link-ready') void importVideoLink(); else if(importStatus==='ready') void continueToWorkspace(category) } }} placeholder={t.linkPlaceholder} /><p className="link-help">{t.linkHelp}</p><div className="import-divider"><span>{ar ? 'أو' : 'OR'}</span></div><button className="button-secondary choose-button" onClick={() => void pickVideo()} disabled={busy||linkBusy||linkStarting||projectOperation!=='idle'} aria-busy={busy}><span aria-hidden="true" className={busy ? 'spinner' : ''}>{busy ? '' : '＋'}</span>{importStatus === 'choosing' ? t.choosing : t.chooseVideo}</button><p className="file-types">{t.supported}</p><p className="local-note"><span className="local-dot" />{t.app}</p>{source && <section className="source-card selected-source"><div className="source-thumb"><span>▶</span></div><div className="source-info"><strong>{source.name}</strong><small>{source.kind === 'file' ? t.fileSource : t.linkSource}</small><small className="path-text">{source.kind === 'file' ? source.path : source.url}</small></div></section>}<button className="button-primary next-button" onClick={() => { if(source?.kind==='link')void importVideoLink();else void continueToWorkspace(category) }} disabled={!(importStatus==='ready'||importStatus==='link-ready')||projectOperation!=='idle'||linkBusy||linkStarting} aria-busy={projectOperation==='creating'||linkStarting||linkBusy}>{(projectOperation==='creating'||linkStarting||linkBusy)&&<span className="spinner"/>}{linkStarting?t.chooseProjectLocation:linkBusy?(linkJob?.stage==='checking'?t.checkingLink:linkJob?.stage==='saving'?t.savingLinkProject:`${t.downloadingLink} · ${Math.floor((linkJob?.progress||0)*100)}%`):source?.kind==='link'?t.importLink:(ar?'فتح المحرر':'Open editor')}<span aria-hidden="true"> →</span></button><div id="import-status" className="operation-status" role="status" aria-live="polite" aria-atomic="true">{(busy||projectOperation==='creating'||linkStarting||linkBusy)&&<span className="spinner" aria-hidden="true"/>}{linkJob?.status==='running'&&linkJob.stage==='downloading'&&<progress max={1} value={linkJob.progress}/>}<span>{statusText}</span></div>{busy&&<button className="text-button" onClick={cancelImport}>{ar?'إلغاء الانتظار':'Cancel waiting'}</button>}{linkJob?.status==='running'&&linkJob.stage!=='saving'&&<button className="text-button" onClick={()=>void window.youcut.cancelLinkImport()}>{t.cancelDownload}</button>}{linkJob?.status==='error'&&<p className="error-message" role="alert">{linkJob.error}</p>}{projectsError&&<p className="error-message" role="alert">{projectsError}</p>}</div></div>
         )}
 
         {screen === 'ready' && source?.kind === 'file' && currentProjectId && currentSettings && <Editor key={currentProjectId} source={source} language={language} projectId={currentProjectId} initialSettings={currentSettings} category={currentProjectCategory || 'general'} categorySaving={categorySaving} categoryError={categoryError} onCategoryChange={category => void updateProjectCategory(category)} onBack={() => { clearSource(); setVideoLinkInput(''); void loadRecentProjects() }} />}

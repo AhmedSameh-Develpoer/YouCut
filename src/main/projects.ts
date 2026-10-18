@@ -8,13 +8,21 @@ import { getBackupDirectorySync, getIgnoredRecoveryTime } from './app-settings'
 import { recordActivity } from './activity-log'
 
 const registryFile = () => join(app.getPath('userData'), 'recent-projects.json')
+function legacyRegistryFiles() {
+  const appData = app.getPath('appData')
+  return [join(appData, 'Electron', 'recent-projects.json'), join(appData, 'youcut', 'recent-projects.json')]
+    .filter((path, index, paths) => path.toLowerCase() !== registryFile().toLowerCase() && paths.findIndex(value => value.toLowerCase() === path.toLowerCase()) === index)
+}
 type RecentEntry = { path: string; lastOpenedAt: string; name?: string; category?: ProjectCategory; modifiedAt?: string; sourceName?: string }
 let registry: Record<string, RecentEntry> = {}
 
 export async function loadProjectRegistry() {
-  try {
-    const parsed = JSON.parse(await readFile(registryFile(), 'utf8')) as Record<string, unknown>
-    const next: Record<string, RecentEntry> = {}
+  const next: Record<string, RecentEntry> = {}
+  const locations = [...legacyRegistryFiles(), registryFile()]
+  for (const location of locations) {
+    let parsed: Record<string, unknown>
+    try { parsed = JSON.parse(await readFile(location, 'utf8')) as Record<string, unknown> }
+    catch { continue }
     for (const [id, value] of Object.entries(parsed)) {
       const recent: RecentEntry | null = typeof value === 'string'
         ? { path: value, lastOpenedAt: '' }
@@ -26,11 +34,12 @@ export async function loadProjectRegistry() {
         const project = validateDocument(JSON.parse(await readFile(recent.path, 'utf8')))
         if (project.projectId === id) Object.assign(recent, { name: project.name, category: project.category, modifiedAt: project.modifiedAt, sourceName: basename(project.source.path), lastOpenedAt: recent.lastOpenedAt || project.modifiedAt })
       } catch { /* Keep cached Recent details when the project file is unavailable. */ }
-      next[id] = recent
+      const previous = next[id]
+      if (!previous || (recent.lastOpenedAt || '').localeCompare(previous.lastOpenedAt || '') >= 0) next[id] = recent
     }
-    registry = next
-    await writeRegistry().catch(() => recordActivity({ level: 'warning', event: 'recent-project-registry-migration-failed' }))
-  } catch { registry = {} }
+  }
+  registry = next
+  await writeRegistry().catch(() => recordActivity({ level: 'warning', event: 'recent-project-registry-migration-failed' }))
 }
 
 async function writeAtomic(path: string, contents: string) {
@@ -127,9 +136,9 @@ export async function listProjects(): Promise<RecentProject[]> {
   return result.sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt))
 }
 
-export async function createProject(projectPath: string, sourcePath: string, sourceSize: number, sourceModified: string, name: string, category: ProjectCategory) {
+export async function createProject(projectPath: string, sourcePath: string, sourceSize: number, sourceModified: string, name: string, category: ProjectCategory, projectId: string = randomUUID()) {
   const now = new Date().toISOString()
-  const document: ProjectDocument = { format: 'youcut-project', schemaVersion: 1, projectId: randomUUID(), name, category, createdAt: now, modifiedAt: now, source: { kind: 'file', path: sourcePath, sizeBytes: sourceSize, modifiedAt: sourceModified }, editor: { start: 0, end: 60, cropX: .5, cropY: .5, muted: false, fps: 30, faceCam: { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } } }
+  const document: ProjectDocument = { format: 'youcut-project', schemaVersion: 1, projectId, name, category, createdAt: now, modifiedAt: now, source: { kind: 'file', path: sourcePath, sizeBytes: sourceSize, modifiedAt: sourceModified }, editor: { start: 0, end: 60, cropX: .5, cropY: .5, muted: false, fps: 30, faceCam: { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } } }
   const file = projectPath.toLowerCase().endsWith('.youcut') ? projectPath : `${projectPath}.youcut`
   await mkdir(dirname(file), { recursive: true })
   await ensureProjectData(file, document.projectId)

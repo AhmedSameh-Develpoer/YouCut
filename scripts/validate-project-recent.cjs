@@ -15,11 +15,12 @@ async function main() {
   await fs.mkdir(dist, { recursive: true })
   const temp = await fs.mkdtemp(path.join(dist, '.youcut-recent-'))
   const userData = path.join(temp, 'user-data')
+  const appData = path.join(temp, 'app-data')
   const projectsDirectory = path.join(temp, 'projects')
   const backupDirectory = path.join(temp, 'backups')
-  await Promise.all([fs.mkdir(userData, { recursive: true }), fs.mkdir(projectsDirectory, { recursive: true })])
+  await Promise.all([fs.mkdir(userData, { recursive: true }), fs.mkdir(appData, { recursive: true }), fs.mkdir(projectsDirectory, { recursive: true })])
 
-  const electronStub = { app: { getPath: name => name === 'userData' ? userData : temp }, dialog: {} }
+  const electronStub = { app: { getPath: name => name === 'userData' ? userData : name === 'appData' ? appData : temp }, dialog: {} }
   const settingsPath = path.join(temp, 'app-settings.cjs')
   const activityPath = path.join(temp, 'activity-log.cjs')
   await fs.writeFile(settingsPath, `exports.getBackupDirectorySync = () => ${JSON.stringify(backupDirectory)}; exports.getIgnoredRecoveryTime = () => undefined;`)
@@ -81,7 +82,17 @@ async function main() {
     if (JSON.stringify(cameraRoundTrip.project.editor.faceCam) !== JSON.stringify(faceCam)) throw new Error('Face camera settings did not persist through project save and reload.')
     const backups = await fs.readdir(path.join(backupDirectory, created.projectId))
     if (backups.length !== 2) throw new Error('Project edits did not retain the latest two healthy backup snapshots.')
-    process.stdout.write(JSON.stringify({ recentSurvivesReload: true, lastOpenedSort: true, missingProjectRetained: true, movedProjectRestored: true, legacyRecentMigration: true, faceCamRoundTrip: true, changedCategory: savedDocument.category, backupCount: backups.length }) + '\n')
+
+    const legacy = await projects.createProject(path.join(projectsDirectory, 'Legacy.youcut'), sourcePath, sourceInfo.size, sourceInfo.mtime.toISOString(), 'Legacy', 'general')
+    await fs.writeFile(path.join(userData, 'recent-projects.json'), JSON.stringify({ [created.projectId]: projectPath, [second.projectId]: movedPath }))
+    await fs.mkdir(path.join(appData, 'Electron'), { recursive: true })
+    await fs.writeFile(path.join(appData, 'Electron', 'recent-projects.json'), JSON.stringify({ [legacy.projectId]: path.join(projectsDirectory, 'Legacy.youcut') }))
+    delete require.cache[modulePath]
+    projects = require(modulePath)
+    await projects.loadProjectRegistry()
+    const afterRestart = await projects.listProjects()
+    if (afterRestart.length !== 3 || !afterRestart.some(project => project.projectId === legacy.projectId && project.projectAvailable)) throw new Error('Projects saved under the previous Electron user-data folder were not migrated into Recent.')
+    process.stdout.write(JSON.stringify({ recentSurvivesRestart: true, lastOpenedSort: true, missingProjectRetained: true, movedProjectRestored: true, legacyRecentMigration: true, previousUserDataMigration: true, faceCamRoundTrip: true, changedCategory: savedDocument.category, backupCount: backups.length }) + '\n')
   } finally {
     Module._load = originalLoad
     await fs.rm(temp, { recursive: true, force: true })
