@@ -80,7 +80,7 @@ async function main() {
     const keyframes = [{ time: 2, cropX: 0.1, cropY: 0.2, zoom: 1.2 }, { time: 8, cropX: 0.9, cropY: 0.8, zoom: 2.4 }]
     const trackingLosses = [3.5, 6]
     const sceneFraming = { cropX: .22, cropY: .58, zoom: 1.4, keyframes: [{ time: 3, cropX: .25, cropY: .5, zoom: 1.3 }], trackingLosses: [4.5], faceCam: { enabled: true, x: .1, y: .2, width: .25, height: .2, size: .3, placement: 'top', positionX: .5, positionY: .05 } }
-    const analysis = { range: { start: 2, end: 10 }, sceneChanges: [4.2, 7.1], suggestions: [{ id: 'scene-1', start: 3, end: 6, score: 82, reason: '2 visual scene changes in 3 seconds', framing: sceneFraming }], selectedIds: ['scene-1'] }
+    const analysis = { range: { start: 2, end: 10 }, sceneChanges: [4.2, 7.1], suggestions: [{ id: 'scene-1', name: 'My highlight', start: 3, end: 6, score: 82, reason: '2 visual scene changes in 3 seconds', framing: sceneFraming }], selectedIds: ['scene-1'] }
     await projects.saveProject(created.projectId, { ...savedDocument.editor, faceCam, zoom: 1.1, keyframes, trackingLosses, analysis })
     const cameraRoundTrip = await projects.readProject(created.projectId)
     if (JSON.stringify(cameraRoundTrip.project.editor.faceCam) !== JSON.stringify(faceCam)) throw new Error('Face camera settings did not persist through project save and reload.')
@@ -109,7 +109,7 @@ async function main() {
     await projects.loadProjectRegistry()
     const afterRestart = await projects.listProjects()
     if (afterRestart.length !== 3 || !afterRestart.some(project => project.projectId === legacy.projectId && project.projectAvailable)) throw new Error('Projects saved under the previous Electron user-data folder were not migrated into Recent.')
-    process.stdout.write(JSON.stringify({ recentSurvivesRestart: true, lastOpenedSort: true, missingProjectRetained: true, movedProjectRestored: true, legacyRecentMigration: true, previousUserDataMigration: true, faceCamRoundTrip: true, keyframePersistence: true, trackingLossPersistence: true, savedAnalysisRoundTrip: true, perSuggestionFramingSurvivesRestart: true, invalidKeyframeRejected: true, invalidAnalysisRejected: true, invalidClipFramingRejected: true, changedCategory: savedDocument.category, backupCount: backups.length }) + '\n')
+    process.stdout.write(JSON.stringify({ recentSurvivesRestart: true, lastOpenedSort: true, missingProjectRetained: true, movedProjectRestored: true, legacyRecentMigration: true, previousUserDataMigration: true, faceCamRoundTrip: true, keyframePersistence: true, trackingLossPersistence: true, savedAnalysisRoundTrip: true, perSuggestionClipNameSurvivesRestart: true, perSuggestionFramingSurvivesRestart: true, invalidKeyframeRejected: true, invalidAnalysisRejected: true, invalidClipFramingRejected: true, changedCategory: savedDocument.category, backupCount: backups.length }) + '\n')
   } finally {
     Module._load = originalLoad
     await fs.rm(temp, { recursive: true, force: true })

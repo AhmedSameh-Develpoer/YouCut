@@ -1,4 +1,5 @@
 import { basename, extname, join } from 'node:path'
+import { access } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { BatchExportJob, BatchExportRequest, ExportJob, ExportOptions, FaceCamSettings } from '../shared/contracts'
 import { ExportRunner } from './video-export'
@@ -12,6 +13,15 @@ type ExportDriver = {
 function cleanName(value: string, fallback: string) {
   const cleaned = value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').trim().slice(0, 80)
   return cleaned || fallback
+}
+
+async function uniqueDestination(directory: string, baseName: string) {
+  let candidate = join(directory, `${baseName}.mp4`)
+  let suffix = 2
+  while (true) {
+    try { await access(candidate); candidate = join(directory, `${baseName} (${suffix++}).mp4`) }
+    catch { return candidate }
+  }
 }
 
 function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)) }
@@ -91,7 +101,7 @@ export class BatchExportRunner {
     item.error = undefined
     const sourceBase = basename(input, extname(input))
     const outputName = cleanName(`${sourceBase} - ${item.name}`, `Clip ${index + 1}`)
-    const destination = join(job.outputDirectory, `${outputName}.mp4`)
+    const destination = await uniqueDestination(job.outputDirectory, outputName)
     const framing=item.framing
     const options: ExportOptions = { mediaUrl: request.mediaUrl, start: item.start, end: item.end, cropX: framing?.cropX??request.cropX, cropY: framing?.cropY??request.cropY, zoom: framing?.zoom??request.zoom??1, keyframes: framing?.keyframes??request.keyframes??[], muted: request.muted, fps: request.fps, faceCam: framing?.faceCam??request.faceCam??{ enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } as FaceCamSettings }
     try {

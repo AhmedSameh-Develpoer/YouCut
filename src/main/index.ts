@@ -36,6 +36,11 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'youcut-media', privileges: { st
 const currentDirectory = fileURLToPath(new URL('.', import.meta.url))
 let observedAnalysis = '', observedTracking = '', observedExport = '', observedBatch = '', observedLinkImport = ''
 
+function cleanExportName(value: string, fallback: string) {
+  const cleaned = value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').trim().slice(0, 80)
+  return cleaned || fallback
+}
+
 process.on('uncaughtException', error => { recordActivity({ level: 'error', event: 'main-process-uncaught-exception', details: error.message }); process.exit(1) })
 process.on('unhandledRejection', reason => { recordActivity({ level: 'error', event: 'main-process-unhandled-rejection', details: reason instanceof Error ? reason.message : String(reason) }); process.exit(1) })
 
@@ -248,7 +253,9 @@ ipcMain.handle('export:start', async (event, options: ExportOptions) => {
   exportDialogOpen = true
   try {
     const parent = BrowserWindow.fromWebContents(event.sender)
-    const settings = { title: 'Export MP4', defaultPath: join(getLastExportDirectorySync() || app.getPath('videos'), basename(input).replace(/\.[^.]+$/, '') + '-short.mp4'), filters: [{ name: 'MP4', extensions: ['mp4'] }] }
+    const sourceStem = basename(input).replace(/\.[^.]+$/, '')
+    const defaultName = cleanExportName(options.fileName || `${sourceStem}-short`, `${sourceStem}-short`).replace(/\.mp4$/i, '')
+    const settings = { title: 'Export MP4', defaultPath: join(getLastExportDirectorySync() || app.getPath('videos'), `${defaultName}.mp4`), filters: [{ name: 'MP4', extensions: ['mp4'] }] }
     const result = parent ? await dialog.showSaveDialog(parent, settings) : await dialog.showSaveDialog(settings)
     if (result.canceled || !result.filePath) return null
     const path = result.filePath.toLowerCase().endsWith('.mp4') ? result.filePath : result.filePath + '.mp4'

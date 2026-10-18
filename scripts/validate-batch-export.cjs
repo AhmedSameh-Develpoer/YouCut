@@ -63,11 +63,14 @@ async function main() {
       clips: [
         { id: 'one', name: 'Moment One', start: 0, end: 1, framing: { cropX: .04, cropY: .5, zoom: 1, keyframes: [], trackingLosses: [], faceCam: { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } } },
         { id: 'two', name: 'Moment: Two', start: 1.2, end: 2.2, framing: { cropX: .96, cropY: .5, zoom: 1.7, keyframes: [], trackingLosses: [], faceCam: { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } } },
+        { id: 'three', name: 'Moment One', start: 2.4, end: 3.4, framing: { cropX: .5, cropY: .5, zoom: 1, keyframes: [], trackingLosses: [], faceCam: { enabled: false, x: .68, y: .62, width: .24, height: .28, size: .3, placement: 'bottom', positionX: .5, positionY: .88 } } },
       ],
     })
     while (runner.job?.status === 'running') await new Promise(resolve => setTimeout(resolve, 150))
     const job = runner.snapshot()
     if (job?.status !== 'complete' || job.items.some(item => item.status !== 'complete' || !item.path)) throw new Error(`Real batch export failed: ${JSON.stringify(job)}`)
+    const batchNames = job.items.map(item => path.basename(item.path))
+    if (!batchNames.includes('synthetic-4k - Moment One.mp4') || !batchNames.includes('synthetic-4k - Moment_ Two.mp4') || !batchNames.includes('synthetic-4k - Moment One (2).mp4')) throw new Error(`Clip names were not preserved safely or duplicate names collided: ${batchNames.join(', ')}`)
     for (const item of job.items) {
       if ((await fs.stat(item.path)).size < 1000) throw new Error(`Export is unexpectedly small: ${item.path}`)
       const metadata = await run(ffmpeg, ['-hide_banner','-i',item.path]) .catch(error => error.message)
@@ -92,7 +95,7 @@ async function main() {
     let difference=0;for(let i=0;i<pixelsA.length;i+=97)difference+=Math.abs(pixelsA[i]-pixelsB[i])
     if(difference<10000)throw new Error('The exported framing did not visibly move between manual keyframes.')
     await run(ffmpeg,['-v','error','-i',animatedOutput,'-f','null','-'])
-    process.stdout.write(JSON.stringify({ realFfmpegBatch: true, clips: job.items.length, dimensions: '1080x1920', fullDecode: true, perClipFraming: true, perClipSampleDifference: clipDifference, animatedKeyframeCrop: true, sampledFrameDifference: difference, files: job.items.map(item => path.basename(item.path)) }) + '\n')
+    process.stdout.write(JSON.stringify({ realFfmpegBatch: true, clips: job.items.length, dimensions: '1080x1920', fullDecode: true, perClipFraming: true, customNames: true, duplicateNamesAvoidOverwrite: true, perClipSampleDifference: clipDifference, animatedKeyframeCrop: true, sampledFrameDifference: difference, files: batchNames }) + '\n')
   } finally {
     Module._load = originalLoad
     if (configuredFfmpeg) process.env.FFMPEG_PATH = configuredFfmpeg
