@@ -1,7 +1,7 @@
 {
   "name": "youcut",
   "productName": "YouCut",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "A local-first workspace for turning long videos into vertical shorts.",
   "private": true,
   "type": "module",
@@ -14,6 +14,7 @@
     "test:recent": "node scripts/validate-project-recent.cjs",
     "test:batch": "node scripts/validate-batch-export.cjs",
     "test:keyframes": "node scripts/validate-framing-keyframes.cjs",
+    "test:tracking": "node scripts/validate-object-tracking.cjs",
     "test:links": "node scripts/validate-link-import.cjs",
     "test:links:e2e": "node scripts/validate-link-import-e2e.cjs",
     "vendor:yt-dlp": "node scripts/fetch-yt-dlp.cjs",

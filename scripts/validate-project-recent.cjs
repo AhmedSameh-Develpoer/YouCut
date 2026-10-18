@@ -78,10 +78,12 @@ async function main() {
     if (updated.category !== 'education' || savedDocument.category !== 'education' || finalList.find(project => project.projectId === created.projectId)?.category !== 'education') throw new Error('Changed category was not persisted to the project and Recent.')
     const faceCam = { enabled: true, x: 0.12, y: 0.16, width: 0.3, height: 0.25, size: 0.35, placement: 'custom', positionX: 0.4, positionY: 0.55 }
     const keyframes = [{ time: 2, cropX: 0.1, cropY: 0.2, zoom: 1.2 }, { time: 8, cropX: 0.9, cropY: 0.8, zoom: 2.4 }]
-    await projects.saveProject(created.projectId, { ...savedDocument.editor, faceCam, zoom: 1.1, keyframes })
+    const trackingLosses = [3.5, 6]
+    await projects.saveProject(created.projectId, { ...savedDocument.editor, faceCam, zoom: 1.1, keyframes, trackingLosses })
     const cameraRoundTrip = await projects.readProject(created.projectId)
     if (JSON.stringify(cameraRoundTrip.project.editor.faceCam) !== JSON.stringify(faceCam)) throw new Error('Face camera settings did not persist through project save and reload.')
     if (JSON.stringify(cameraRoundTrip.project.editor.keyframes) !== JSON.stringify(keyframes) || cameraRoundTrip.project.editor.zoom !== 1.1) throw new Error('Framing keyframes and zoom did not persist through project save and reload.')
+    if (JSON.stringify(cameraRoundTrip.project.editor.trackingLosses) !== JSON.stringify(trackingLosses)) throw new Error('Tracking loss markers did not persist through project save and reload.')
     let invalidKeyframesRejected = false
     try { await projects.saveProject(created.projectId, { ...cameraRoundTrip.project.editor, keyframes: [{ time: 3, cropX: 1.5, cropY: 0, zoom: 1 }] }) } catch { invalidKeyframesRejected = true }
     if (!invalidKeyframesRejected) throw new Error('Invalid framing keyframes were accepted.')
@@ -97,7 +99,7 @@ async function main() {
     await projects.loadProjectRegistry()
     const afterRestart = await projects.listProjects()
     if (afterRestart.length !== 3 || !afterRestart.some(project => project.projectId === legacy.projectId && project.projectAvailable)) throw new Error('Projects saved under the previous Electron user-data folder were not migrated into Recent.')
-    process.stdout.write(JSON.stringify({ recentSurvivesRestart: true, lastOpenedSort: true, missingProjectRetained: true, movedProjectRestored: true, legacyRecentMigration: true, previousUserDataMigration: true, faceCamRoundTrip: true, keyframePersistence: true, invalidKeyframeRejected: true, changedCategory: savedDocument.category, backupCount: backups.length }) + '\n')
+    process.stdout.write(JSON.stringify({ recentSurvivesRestart: true, lastOpenedSort: true, missingProjectRetained: true, movedProjectRestored: true, legacyRecentMigration: true, previousUserDataMigration: true, faceCamRoundTrip: true, keyframePersistence: true, trackingLossPersistence: true, invalidKeyframeRejected: true, changedCategory: savedDocument.category, backupCount: backups.length }) + '\n')
   } finally {
     Module._load = originalLoad
     await fs.rm(temp, { recursive: true, force: true })

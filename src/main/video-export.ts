@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { access, readdir, copyFile, rm } from 'node:fs/promises'
+import { access, readdir, copyFile, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { join, dirname, basename, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -99,7 +99,7 @@ export async function probeMedia(executable: string, path: string): Promise<{ du
 export function exportArguments(input: string, output: string, o: ExportOptions, sourceFps: number) {
   const x = Math.max(0,Math.min(1,o.cropX)), y = Math.max(0,Math.min(1,o.cropY))
   const zoom = o.zoom ?? 1, keyframes = o.keyframes || []
-  if (![x,y].every(Number.isFinite) || !Number.isFinite(zoom) || zoom < 1 || zoom > 3 || keyframes.length > 500 || keyframes.some(frame => ![frame.time,frame.cropX,frame.cropY,frame.zoom].every(Number.isFinite) || frame.time < 0 || frame.time > 86400 || frame.cropX < 0 || frame.cropX > 1 || frame.cropY < 0 || frame.cropY > 1 || frame.zoom < 1 || frame.zoom > 3)) throw new Error('Framing keyframes are invalid.')
+  if (![x,y].every(Number.isFinite) || !Number.isFinite(zoom) || zoom < 1 || zoom > 3 || keyframes.length > 1000 || keyframes.some(frame => ![frame.time,frame.cropX,frame.cropY,frame.zoom].every(Number.isFinite) || frame.time < 0 || frame.time > 86400 || frame.cropX < 0 || frame.cropX > 1 || frame.cropY < 0 || frame.cropY > 1 || frame.zoom < 1 || frame.zoom > 3)) throw new Error('Framing keyframes are invalid.')
   const sortedFrames = keyframes.slice().sort((a,b)=>a.time-b.time)
   if (sortedFrames.some((frame,index)=>index>0&&frame.time-sortedFrames[index-1].time<.06)) throw new Error('Framing keyframes are too close together.')
   const interpolate = (time:number,field:'cropX'|'cropY'|'zoom')=>{
@@ -113,9 +113,13 @@ export function exportArguments(input: string, output: string, o: ExportOptions,
   const expression=(field:'cropX'|'cropY'|'zoom')=>{
     if(!sortedFrames.length)return String(field==='cropX'?x:field==='cropY'?y:zoom)
     const points=[{time:o.start,value:interpolate(o.start,field)},...sortedFrames.filter(frame=>frame.time>o.start+.001&&frame.time<o.end-.001).map(frame=>({time:frame.time,value:frame[field]})),{time:o.end,value:interpolate(o.end,field)}]
-    let result=String(points[points.length-1].value)
-    for(let index=points.length-2;index>=0;index--){const left=points[index],right=points[index+1],duration=right.time-left.time;result=`if(lt(t,${(right.time-o.start).toFixed(4)}),${left.value}+(${right.value-left.value})*(t-${(left.time-o.start).toFixed(4)})/${duration.toFixed(4)},${result})`}
-    return result
+    const segments=points.slice(0,-1).map((left,index)=>({left:{time:left.time-o.start,value:left.value},right:{time:points[index+1].time-o.start,value:points[index+1].value}}))
+    const render=(range:typeof segments):string=>{
+      if(range.length===1){const {left,right}=range[0],delta=right.value-left.value,duration=right.time-left.time;return Math.abs(delta)<1e-12?String(left.value):`${left.value}+(${delta})*(t-${left.time.toFixed(4)})/${duration.toFixed(4)}`}
+      const split=Math.floor(range.length/2),at=range[split].left.time
+      return `if(lt(t,${at.toFixed(4)}),${render(range.slice(0,split))},${render(range.slice(split))})`
+    }
+    return `if(lt(t,${segments[0].left.time.toFixed(4)}),${segments[0].left.value},if(lt(t,${segments.at(-1)!.right.time.toFixed(4)}),${render(segments)},${segments.at(-1)!.right.value}))`
   }
   const cropZoom=expression('zoom'),cropX=expression('cropX'),cropY=expression('cropY')
   const fps = Math.min(o.fps,sourceFps)
@@ -127,6 +131,23 @@ export function exportArguments(input: string, output: string, o: ExportOptions,
     ? ['-filter_complex', `[0:v]split=2[main][camera];[main]${baseFilter},fps=${fps}[base];[camera]crop=w='iw*${cam.width}':h='ih*${cam.height}':x='iw*${cam.x}':y='ih*${cam.y}',scale=w='1080*${cam.size}':h='1920*${cam.size}':force_original_aspect_ratio=decrease:flags=lanczos,setsar=1[cam];[base][cam]overlay=x='(W-w)*${cam.positionX}':y='(H-h)*${cam.positionY}',fps=${fps}[vout]`, '-map', '[vout]']
     : ['-vf', `${baseFilter},fps=${fps}`, '-map', '0:v:0']
   return ['-hide_banner','-nostdin','-n','-ss',String(o.start),'-i',input,'-t',String(o.end-o.start),...filterArgs,...(o.muted ? ['-an'] : ['-map','0:a:0?','-c:a','aac','-b:a','160k']),'-c:v','libx264','-preset','veryfast','-crf','21','-pix_fmt','yuv420p','-movflags','+faststart','-progress','pipe:1','-nostats',output]
+}
+const filterScriptOptions = new Map<string,string>()
+async function graphFromFileOption(executable:string) {
+  const cached=filterScriptOptions.get(executable);if(cached)return cached
+  const version=await new Promise<string>(resolve=>{const child=spawn(executable,['-version'],{windowsHide:true});let output='';child.stdout.on('data',chunk=>{output=(output+chunk.toString()).slice(0,2000)});child.stderr.on('data',chunk=>{output=(output+chunk.toString()).slice(0,2000)});child.on('error',()=>resolve(''));child.on('close',()=>resolve(output))})
+  const major=Number(/ffmpeg version\s+(\d+)/i.exec(version)?.[1])
+  const option=major>=9?'-/filter_complex':'-filter_complex_script'
+  filterScriptOptions.set(executable,option);return option
+}
+export async function prepareFilterScript(executable:string,args:string[],scriptPath:string) {
+  const simpleIndex=args.indexOf('-vf'),complexIndex=args.indexOf('-filter_complex'),index=simpleIndex>=0?simpleIndex:complexIndex
+  if(index<0||args[index+1].length<12000)return {args,scriptPath:undefined as string|undefined}
+  let graph=args[index+1]
+  if(simpleIndex>=0){graph=`[0:v:0]${graph}[vout]`;const map=args.indexOf('-map');if(map>=0)args[map+1]='[vout]';else args.splice(index,2,'-map','[vout]')}
+  await writeFile(scriptPath,graph,'utf8')
+  args.splice(index,2,await graphFromFileOption(executable),scriptPath)
+  return {args,scriptPath}
 }
 export async function availablePath(path: string) {
   const extension = extname(path) || '.mp4'
@@ -148,13 +169,15 @@ export class ExportRunner {
     const job: ExportJob = { id: randomUUID(), status: 'running', progress: 0 }
     this.job=job; this.cancelled=false
     const temp=join(dirname(destination),`.youcut-${job.id}.mp4`)
+    const filterScript=`${temp}.filter`
     void (async()=>{
       try {
         const exe=await findFfmpeg(); const info=await probeMedia(exe,input)
         if(o.end>info.duration+0.1) throw new Error('Clip ends after the source video.')
         if(this.cancelled) { job.status='cancelled'; return }
+        const prepared=await prepareFilterScript(exe,exportArguments(input,temp,o,info.fps),filterScript)
         await new Promise<void>((resolve,reject)=>{
-          const child=spawn(exe,exportArguments(input,temp,o,info.fps),{windowsHide:true}); this.child=child
+          const child=spawn(exe,prepared.args,{windowsHide:true}); this.child=child
           let buffer='',diagnostic=''
           child.stdout.on('data',chunk=>{buffer+=chunk; const lines=buffer.split('\n'); buffer=lines.pop()||''; for(const line of lines) { const match=/^out_time_us=(\d+)/.exec(line); if(match) job.progress=Math.min(0.99,Number(match[1])/1000000/(o.end-o.start)) } })
           child.stderr.on('data',chunk=>{diagnostic=(diagnostic+chunk).slice(-1800)})
@@ -170,7 +193,7 @@ export class ExportRunner {
         }
         job.path=final; job.progress=1; job.status='complete'
       } catch(error) { job.status=this.cancelled?'cancelled':'error'; if(!this.cancelled) job.error=error instanceof Error?error.message:'Export failed.' }
-      finally { this.child=null; await rm(temp,{force:true}).catch(()=>{}) }
+      finally { this.child=null; await Promise.all([rm(temp,{force:true}),rm(filterScript,{force:true})]).catch(()=>{}) }
     })()
     return {...job}
   }

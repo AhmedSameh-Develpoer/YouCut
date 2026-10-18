@@ -8,9 +8,10 @@ import { mediaResponse } from './media-response'
 import { PreviewRunner } from './video-preview'
 import { ExportRunner, findFfmpeg, probeMedia } from './video-export'
 import { SceneAnalysisRunner } from './scene-analysis'
+import { ObjectTrackingRunner } from './object-tracking'
 import { getActivityReport, getRecentActivity, initializeActivityLog, markCleanExit, recordActivity } from './activity-log'
 import { chooseBackupDirectory, getBackupSettings, getLastExportDirectorySync, markRecoveryHandled, saveLastExportDirectory } from './app-settings'
-import type { BatchExportRequest, ExportOptions, ProjectCategory } from '../shared/contracts'
+import type { BatchExportRequest, ExportOptions, ProjectCategory, TrackingRequest } from '../shared/contracts'
 import { BatchExportRunner } from './batch-export'
 import { chooseProjectPath, createProject, flushProject, listProjects, loadProjectRegistry, readProject, registerProjectFile, relinkProject, restoreProjectSnapshot, saveProject, updateProjectCategory } from './projects'
 import { LinkImportRunner } from './link-import'
@@ -23,13 +24,14 @@ const runner = new ExportRunner()
 const batchRunner = new BatchExportRunner(runner)
 const previews = new PreviewRunner()
 const analysis = new SceneAnalysisRunner()
+const tracking = new ObjectTrackingRunner()
 const linkImport = new LinkImportRunner()
 const originalTokens = new Set<string>()
 let quitting = false
 let exportDialogOpen = false
 protocol.registerSchemesAsPrivileged([{ scheme: 'youcut-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }])
 const currentDirectory = fileURLToPath(new URL('.', import.meta.url))
-let observedAnalysis = '', observedExport = '', observedBatch = '', observedLinkImport = ''
+let observedAnalysis = '', observedTracking = '', observedExport = '', observedBatch = '', observedLinkImport = ''
 
 process.on('uncaughtException', error => { recordActivity({ level: 'error', event: 'main-process-uncaught-exception', details: error.message }); process.exit(1) })
 process.on('unhandledRejection', reason => { recordActivity({ level: 'error', event: 'main-process-unhandled-rejection', details: reason instanceof Error ? reason.message : String(reason) }); process.exit(1) })
@@ -194,6 +196,7 @@ ipcMain.on('project:save-before-close', (event, projectId: string, editor) => {
   else if (!event.returnValue.backupSaved) recordActivity({ level: 'warning', event: 'project-backup-unavailable', operationId: projectId })
 })
 ipcMain.handle('analysis:start', async (_event, mediaUrl: string, start: number, end: number) => {
+  if (tracking.job?.status === 'running' || runner.job?.status === 'running' || batchRunner.job?.status === 'running') throw new Error('Finish the current video task before scene analysis.')
   const token = new URL(mediaUrl).hostname, path = media.get(token)
   if (!path || !originalTokens.has(token)) throw new Error('Choose a local video before analysis.')
   const job = await analysis.start(path, start, end)
@@ -211,8 +214,27 @@ ipcMain.handle('analysis:status', () => {
 })
 ipcMain.handle('analysis:cancel', () => analysis.cancel())
 
+ipcMain.handle('tracking:start', async (_event, request: TrackingRequest) => {
+  if (analysis.job?.status === 'running' || runner.job?.status === 'running' || batchRunner.job?.status === 'running') throw new Error('Finish the current video task before tracking an object.')
+  const token = new URL(request.mediaUrl).hostname, path = media.get(token)
+  if (!path || !originalTokens.has(token)) throw new Error('Choose a local video before tracking.')
+  const job = await tracking.start(path, request)
+  observedTracking = ''
+  recordActivity({ level: 'info', event: 'object-tracking-started', operationId: job.id, details: `range=${request.start}-${request.end}` })
+  return job
+})
+ipcMain.handle('tracking:status', () => {
+  const job = tracking.snapshot()
+  if (job && job.status !== 'running' && observedTracking !== `${job.id}:${job.status}`) {
+    observedTracking = `${job.id}:${job.status}`
+    recordActivity({ level: job.status === 'error' ? 'error' : job.lostAt.length ? 'warning' : 'info', event: `object-tracking-${job.status}`, operationId: job.id, details: job.status === 'complete' ? `${job.keyframes.length} points; ${job.lostAt.length} missed samples` : job.error })
+  }
+  return job
+})
+ipcMain.handle('tracking:cancel', () => tracking.cancel())
+
 ipcMain.handle('export:start', async (event, options: ExportOptions) => {
-  if (exportDialogOpen || runner.job?.status === 'running' || batchRunner.job?.status === 'running') throw new Error('An export is already active.')
+  if (exportDialogOpen || runner.job?.status === 'running' || batchRunner.job?.status === 'running' || tracking.job?.status === 'running' || analysis.job?.status === 'running') throw new Error('Finish the current video task before exporting.')
   const token = new URL(options.mediaUrl).hostname
   const input = media.get(token)
   if (!input || !originalTokens.has(token)) throw new Error('Select the original video again.')
@@ -231,7 +253,7 @@ ipcMain.handle('export:start', async (event, options: ExportOptions) => {
   } finally { exportDialogOpen = false }
 })
 ipcMain.handle('export:batch:start', async (event, request: BatchExportRequest) => {
-  if (exportDialogOpen || runner.job?.status === 'running' || batchRunner.job?.status === 'running') throw new Error('An export is already active.')
+  if (exportDialogOpen || runner.job?.status === 'running' || batchRunner.job?.status === 'running' || tracking.job?.status === 'running' || analysis.job?.status === 'running') throw new Error('Finish the current video task before exporting.')
   const token = new URL(request.mediaUrl).hostname, input = media.get(token)
   if (!input || !originalTokens.has(token)) throw new Error('Select the original video again.')
   exportDialogOpen = true
@@ -308,7 +330,7 @@ ipcMain.handle('preview:status', (_event, mediaUrl: string) => {
 ipcMain.handle('preview:cancel', (_event, mediaUrl: string) => {
   if (media.get(new URL(mediaUrl).hostname) === previews.source) previews.cancel()
 })
-app.on('before-quit', () => { runner.cancel(); batchRunner.cancel(); previews.cancel(); analysis.cancel(); linkImport.cancel() })
+app.on('before-quit', () => { runner.cancel(); batchRunner.cancel(); previews.cancel(); analysis.cancel(); tracking.cancel(); linkImport.cancel() })
 app.on('will-quit', event => {
   if (quitting) { markCleanExit(); return }
   event.preventDefault()
