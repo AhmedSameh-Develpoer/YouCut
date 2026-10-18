@@ -1,10 +1,32 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { YouCutDesktopApi } from '../shared/contracts'
-
 const desktopApi: YouCutDesktopApi = {
   pickVideo: () => ipcRenderer.invoke('media:pick-video'),
-  chooseExportLocation: (suggestedName) => ipcRenderer.invoke('export:choose-location', suggestedName),
+  createProject: (url, name, category) => ipcRenderer.invoke('project:create', url, name, category),
+  updateProjectCategory: (id, category) => ipcRenderer.invoke('project:category:update', id, category),
+  listProjects: () => ipcRenderer.invoke('project:list'),
+  openProject: (id) => ipcRenderer.invoke('project:open', id),
+  openProjectFile: (expectedProjectId) => ipcRenderer.invoke('project:open-file', expectedProjectId),
+  saveProject: (id, editor) => ipcRenderer.invoke('project:save', id, editor),
+  flushProject: (id, editor) => ipcRenderer.sendSync('project:save-before-close', id, editor),
+  startAnalysis: (url, start, end) => ipcRenderer.invoke('analysis:start', url, start, end),
+  getAnalysisJob: () => ipcRenderer.invoke('analysis:status'),
+  cancelAnalysis: () => ipcRenderer.invoke('analysis:cancel'),
+  preparePreview: (url) => ipcRenderer.invoke('preview:start', url),
+  getPreviewJob: (url) => ipcRenderer.invoke('preview:status', url),
+  cancelPreview: (url) => ipcRenderer.invoke('preview:cancel', url),
+  startExport: (options) => ipcRenderer.invoke('export:start', options),
+  getExportJob: () => ipcRenderer.invoke('export:status'),
+  cancelExport: () => ipcRenderer.invoke('export:cancel'),
+  startBatchExport: (request) => ipcRenderer.invoke('export:batch:start', request),
+  getBatchExportJob: () => ipcRenderer.invoke('export:batch:status'),
+  cancelBatchExport: () => ipcRenderer.invoke('export:batch:cancel'),
+  retryBatchExportItem: (index) => ipcRenderer.invoke('export:batch:retry', index),
+  getRecentActivity: () => ipcRenderer.invoke('activity:list'),
+  recordUiError: (message) => ipcRenderer.invoke('activity:renderer-error', message),
+  exportActivityReport: () => ipcRenderer.invoke('activity:export'),
+  getBackupSettings: () => ipcRenderer.invoke('settings:backup:get'),
+  chooseBackupDirectory: () => ipcRenderer.invoke('settings:backup:choose'),
   getAppInfo: () => ipcRenderer.invoke('app:get-info'),
 }
-
 contextBridge.exposeInMainWorld('youcut', desktopApi)

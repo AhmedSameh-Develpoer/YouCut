@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+dist-review/
+dist-final/
 build/tech-validation/
 *.mp4
 *.mov

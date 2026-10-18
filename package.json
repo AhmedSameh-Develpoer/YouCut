@@ -1,7 +1,7 @@
 {
   "name": "youcut",
   "productName": "YouCut",
-  "version": "0.1.0",
+  "version": "0.4.6",
   "description": "A local-first workspace for turning long videos into vertical shorts.",
   "private": true,
   "type": "module",
@@ -11,10 +11,14 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && electron-vite build",
     "preview": "electron-vite preview",
-    "package:win": "npm run build && electron-builder --win nsis"
+    "test:recent": "node scripts/validate-project-recent.cjs",
+    "test:batch": "node scripts/validate-batch-export.cjs",
+    "package:win": "npm run build && electron-builder --win nsis",
+    "package:win:portable": "npm run build && node scripts/package-portable.cjs"
   },
   "dependencies": {},
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@types/node": "^22.12.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -30,9 +34,26 @@
   },
   "build": {
     "appId": "com.youcut.desktop",
-    "directories": { "output": "dist" },
-    "files": ["out/**/*", "package.json"],
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
