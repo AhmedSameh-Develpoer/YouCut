@@ -18,3 +18,4 @@ npm run package:win
 ```
 
 The Windows installer is written to `dist/`. The renderer runs with Electron context isolation, sandboxing, and a small typed preload API; filesystem dialogs stay in the main process.
+
